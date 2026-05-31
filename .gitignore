@@ -2,6 +2,11 @@
 ./pandaPIgrounder/pandaPIgrounder/*
 ./pandaPIgrounder/pandaPIgrounder
 
+# pandaPI binaries
+scripts/pandaPIengine
+scripts/pandaPIgrounder
+scripts/pandaPIparser
+
 # Python cache
 scripts/__pycache__/
 
