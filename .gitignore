@@ -1,6 +1,5 @@
 pandaPIengine/build/*
-./pandaPIgrounder/pandaPIgrounder/*
-./pandaPIgrounder/pandaPIgrounder
+pandaPIgrounder/pandaPIgrounder
 
 # pandaPI binaries
 scripts/pandaPIengine

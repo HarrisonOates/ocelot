@@ -16,7 +16,7 @@ PANDA_ROOT = Path(__file__).parent.parent
 _DEFAULT_TOOLS = {
     "engine":   PANDA_ROOT / "pandaPIengine" / "build" / "pandaPIengine",
     "parser":   PANDA_ROOT / "pandaPIparser" / "pandaPIparser",
-    "grounder": PANDA_ROOT / "scripts" / "pandaPIgrounder",
+    "grounder": PANDA_ROOT / "pandaPIgrounder" / "pandaPIgrounder",
 }
 
 
@@ -30,7 +30,7 @@ def resolve_tool_paths(panda_root: Path, engine, parser, grounder) -> dict:
     defaults = {
         "engine":   panda_root / "pandaPIengine" / "build" / "pandaPIengine",
         "parser":   panda_root / "pandaPIparser" / "pandaPIparser",
-        "grounder": panda_root / "scripts" / "pandaPIgrounder",
+        "grounder": panda_root / "pandaPIgrounder" / "pandaPIgrounder",
     }
     overrides = {"engine": engine, "parser": parser, "grounder": grounder}
     paths = {}

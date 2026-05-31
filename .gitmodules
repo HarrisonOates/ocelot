@@ -1,0 +1,6 @@
+[submodule "pandaPIgrounder/cpddl"]
+	path = pandaPIgrounder/cpddl
+	url = https://gitlab.com/danfis/cpddl.git
+[submodule "pandaPIgrounder/h2-fd-preprocessor"]
+	path = pandaPIgrounder/h2-fd-preprocessor
+	url = https://github.com/galvusdamor/h2-fd-preprocessor.git

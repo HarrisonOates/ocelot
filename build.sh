@@ -29,14 +29,17 @@ fi
 
 echo ""
 echo "=== Building pandaPIgrounder ==="
-GROUNDER_DIR="$PANDA_ROOT/pandaPIgrounder/pandaPIgrounder"
+GROUNDER_DIR="$PANDA_ROOT/pandaPIgrounder"
 GROUNDER_BIN="$GROUNDER_DIR/pandaPIgrounder"
 if [ -f "$GROUNDER_BIN" ]; then
-    echo "  Already built. Remove pandaPIgrounder/pandaPIgrounder/pandaPIgrounder to rebuild."
+    echo "  Already built. Remove pandaPIgrounder/pandaPIgrounder to rebuild."
 else
     if [ ! -f "$GROUNDER_DIR/cpddl/libpddl.a" ]; then
         echo "  Building cpddl dependency..."
+        cd "$PANDA_ROOT"
+        git submodule update --init pandaPIgrounder/cpddl pandaPIgrounder/h2-fd-preprocessor
         cd "$GROUNDER_DIR/cpddl"
+        git submodule update --init
         if git diff --quiet HEAD 2>/dev/null; then
             git apply "$GROUNDER_DIR/0002-makefile.patch" 2>/dev/null || true
         fi
