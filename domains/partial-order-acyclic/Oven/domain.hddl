@@ -1,0 +1,150 @@
+; bricks must be dried in the drying oven
+; different bricks must be dried in different temperature
+; after drying the brick, the oven must be cooled 
+
+(define (domain oven)
+	(:requirements :hierarchy :negative-preconditions :equality :typing :method-preconditions)
+
+	(:types
+		oven
+		brick
+		temperature
+	)
+
+	(:predicates
+		(dried ?b - brick)
+		(oven-temp ?o - oven ?t - temperature)
+		(brick-spec ?b - brick ?t - temperature)
+		(oven-cold ?o - oven)
+	)
+
+	(:task dry
+		:parameters (?b - brick)
+	)
+
+	(:task change_temp
+		:parameters (?o - oven ?t - temperature)
+	)
+	(:task cool_oven
+		:parameters (?o - oven)
+	)
+
+	(:method m0_dry
+		:parameters (?b - brick ?t - temperature ?o - oven)
+		:task (dry ?b)
+		:precondition (and
+			(brick-spec ?b ?t)
+		)
+		:ordered-subtasks (and
+			(change_temp ?o ?t)
+			(do_dry ?b ?o ?t)
+			(cool_oven ?o)
+		)
+	)
+
+	(:method m0_change_temp
+		:parameters (?o - oven ?tFrom - temperature ?tTo - temperature)
+		:task (change_temp ?o ?tTo)
+		:precondition (and
+			(not (= ?tFrom ?tTo))
+			(oven-temp ?o ?tFrom)
+		)
+		:ordered-subtasks (and
+			(do_change_temp ?o ?tFrom ?tTo)
+		)
+	)
+
+
+	(:method m1_change_temp
+		:parameters (?o - oven ?tFrom - temperature ?tTo - temperature)
+		:task (change_temp ?o ?tTo)
+		:precondition (and
+			(= ?tFrom ?tTo)
+			(oven-temp ?o ?tFrom)
+		)
+		:ordered-subtasks (and
+			(nop)
+		)
+	)
+
+	(:method m2_change_temp
+		:parameters (?o - oven ?tTo - temperature)
+		:task (change_temp ?o ?tTo)
+		:precondition (and
+			(oven-cold ?o)
+		)
+		:ordered-subtasks (and
+			(do_heat_oven ?o ?tTo)
+		)
+	)
+
+	(:method m0_cool_oven
+		:parameters (?o - oven ?tFrom - temperature)
+		:task (cool_oven ?o)
+		:precondition (and
+			(oven-temp ?o ?tFrom)
+		)
+		:ordered-subtasks (and
+			(task0 (do_cool_oven ?o ?tFrom))
+		)
+	)
+
+	(:method m1_cool_oven
+		:parameters (?o - oven ?tFrom - temperature)
+		:task (cool_oven ?o)
+		:precondition (and
+			(oven-cold ?o)
+		)
+		:ordered-subtasks (and
+			(nop)
+		)
+	)
+
+	(:action do_dry
+		:parameters (?b - brick ?o - oven ?t - temperature)
+		:precondition (and
+			(oven-temp ?o ?t)
+			(brick-spec ?b ?t)
+		)
+		:effect (and
+			(dried ?b)
+		)
+	)
+
+	(:action do_change_temp
+		:parameters (?o - oven ?tS - temperature ?tE - temperature)
+		:precondition (and
+			(oven-temp ?o ?tS)
+		)
+		:effect (and
+			(oven-temp ?o ?tE)
+			(not (oven-temp ?o ?tS))
+		)
+	)
+
+	(:action do_cool_oven
+		:parameters (?o - oven ?t - temperature)
+		:precondition (and
+			(oven-temp ?o ?t)
+		)
+		:effect (and
+			(not (oven-temp ?o ?t))
+			(oven-cold ?o)
+		)
+	)
+
+	(:action do_heat_oven
+		:parameters (?o - oven ?t - temperature)
+		:precondition (and
+			(oven-cold ?o)
+		)
+		:effect (and
+			(oven-temp ?o ?t)
+		)
+	)
+
+	(:action nop
+  	:parameters ()
+  	:precondition ()
+  	:effect ())
+)

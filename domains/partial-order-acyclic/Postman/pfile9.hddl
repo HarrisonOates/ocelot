@@ -1,0 +1,41 @@
+; num_postmen: 5
+; num_mail: 7
+; num_loc: 2
+
+(define
+   (problem pfile9)
+   (:domain postman)
+   (:objects
+      postman_0 postman_1 postman_2 postman_3 postman_4 - postman
+      mail_0 mail_1 mail_2 mail_3 mail_4 mail_5 mail_6 - mail
+      loc_0 loc_1 - location
+   )
+
+   (:htn
+      :parameters ()
+      :subtasks (and
+         (task0 (deliver mail_0 loc_0))
+         (task1 (deliver mail_1 loc_1))
+         (task2 (deliver mail_2 loc_1))
+         (task3 (deliver mail_3 loc_1))
+         (task4 (deliver mail_4 loc_1))
+         (task5 (deliver mail_5 loc_1))
+         (task6 (deliver mail_6 loc_1))
+      )
+   )
+
+   (:init
+      (at postman_0 loc_0)
+      (at postman_1 loc_0)
+      (at postman_2 loc_0)
+      (at postman_3 loc_0)
+      (at postman_4 loc_0)
+      (at mail_0 loc_0)
+      (at mail_1 loc_0)
+      (at mail_2 loc_1)
+      (at mail_3 loc_0)
+      (at mail_4 loc_1)
+      (at mail_5 loc_0)
+      (at mail_6 loc_1)
+   )
+)

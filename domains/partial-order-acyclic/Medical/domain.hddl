@@ -1,0 +1,182 @@
+; doctor operates on a patient using a toolset
+; toolset must be clean and patient must be ready for an operation to begin
+; patient being ready consists of 2 actions - cleaning patient, and making him ready
+; after the operation, patient must be cleaned
+; it takes two nurses to make patient ready
+; a nurse can clean patient and prepare the toolset
+
+(define (domain medical)
+	(:requirements :hierarchy :negative-preconditions :typing :method-preconditions)
+
+	(:types
+		nurse doctor - agent
+		toolset
+		patient
+	)
+
+	(:predicates
+		(tools-ready ?t - toolset)
+		(operated ?p - patient)
+		(patient-clean ?p - patient)
+		(patient-ready ?p - patient)
+		(busy ?a - agent)
+	)
+
+	(:task operate
+		:parameters (?p - patient)
+	)
+
+	(:task clean_patient
+		:parameters (?p - patient)
+	)
+
+	(:task prepare_patient
+		:parameters (?p - patient)
+	)
+	(:task prepare_tools
+		:parameters (?t - toolset)
+	)
+	(:task perform_operation
+		:parameters (?p - patient ?d - doctor ?t - toolset)
+	)
+
+	(:method m0_operate
+		:parameters (?p - patient ?d - doctor ?t - toolset)
+		:task (operate ?p)
+		:precondition ( )
+		:subtasks (and
+			(task0 (prepare_tools ?t))
+			(task1 (prepare_patient ?p))
+			(task12 (clean_patient ?p))
+			(task2 (perform_operation ?p ?d ?t))
+			(task3 (clean_patient ?p))
+		)
+		:ordering (and
+			(< task0 task2)
+			(< task1 task2)
+			(< task12 task2)
+			(< task0 task3)
+			(< task1 task3)
+			(< task12 task3)
+			(< task2 task3)
+		)
+	)
+
+	(:method m0_clean_patient
+		:parameters (?p - patient ?n - nurse)
+		:task (clean_patient ?p)
+		:precondition (and 
+			(not (patient-clean ?p))
+		)
+		:subtasks (and
+			(do_clean_patient ?p ?n)
+		)
+	)
+
+	(:method m1_clean_patient
+		:parameters (?p - patient ?n - nurse)
+		:task (clean_patient ?p)
+		:precondition (and 
+			(patient-clean ?p)
+		)
+		:subtasks (and
+			(nop)
+		)
+	)
+
+	(:method m0_prepare_patient
+		:parameters (?p - patient ?n1 - nurse)
+		:task (prepare_patient ?p)
+		:precondition (
+		)
+		:ordered-subtasks (and
+			(do_prepare_patient ?p ?n1)
+			(liberate ?n1)
+		)
+	)
+
+	(:method m0_prepare_tools
+		:parameters (?t - toolset ?n1 - nurse)
+		:task (prepare_tools ?t)
+		:precondition (
+		)
+		:ordered-subtasks (and
+			(do_prepare_tools ?t ?n1)
+			(liberate ?n1)
+		)
+	)
+
+	(:method m0_perform_operation
+		:parameters (?p - patient ?d - doctor ?t - toolset)
+		:task (perform_operation ?p ?d ?t)
+		:precondition (
+		)
+		:ordered-subtasks (and
+			(do_operation ?p ?d ?t)
+			(liberate ?d)
+		)
+	)
+
+	(:action do_operation
+		:parameters (?p - patient ?d - doctor ?t - toolset)
+		:precondition (and
+			(tools-ready ?t)
+			(patient-ready ?p)
+			(not(busy ?d))
+		)
+		:effect (and
+			(operated ?p)
+			(not (tools-ready ?t))
+			(not (patient-clean ?p))
+			(busy ?d)
+		)
+	)
+
+	(:action do_clean_patient
+		:parameters (?p - patient ?n - nurse)
+		:precondition (and
+			(not(busy ?n))
+		)
+		:effect (and
+			(patient-clean ?p)
+			(busy ?n)
+		)
+	)
+
+	(:action do_prepare_patient
+		:parameters (?p - patient ?n1 - nurse )
+		:precondition (and
+			(not(busy ?n1))
+		)
+		:effect (and
+			(patient-ready ?p)
+			(busy ?n1)
+		)
+	)
+
+	(:action do_prepare_tools
+		:parameters (?t - toolset ?n1 - nurse)
+		:precondition (and
+			(not(busy ?n1))
+		)
+		:effect (and
+			(tools-ready ?t)
+			(busy ?n1)
+		)
+	)
+	(:action liberate
+		:parameters (?a - agent)
+		:precondition (and
+			(busy ?a)
+		)
+		:effect (and
+			(not(busy ?a))
+		)
+	)
+
+	(:action nop
+		:parameters ()
+		:precondition ()
+		:effect ()
+	)
+)

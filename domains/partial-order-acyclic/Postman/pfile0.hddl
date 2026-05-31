@@ -1,0 +1,28 @@
+; num_postmen: 2
+; num_mail: 2
+; num_loc: 2
+
+(define
+   (problem pfile0)
+   (:domain postman)
+   (:objects
+      postman_0 postman_1 - postman
+      mail_0 mail_1 - mail
+      loc_0 loc_1 - location
+   )
+
+   (:htn
+      :parameters ()
+      :subtasks (and
+         (task0 (deliver mail_0 loc_0))
+         (task1 (deliver mail_1 loc_0))
+      )
+   )
+
+   (:init
+      (at postman_0 loc_1)
+      (at postman_1 loc_0)
+      (at mail_0 loc_0)
+      (at mail_1 loc_1)
+   )
+)

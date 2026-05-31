@@ -1,0 +1,45 @@
+; num_oven: 17
+; num_brick: 3
+; num_temp: 2
+
+(define
+   (problem pfile16)
+   (:domain postman)
+   (:objects
+      oven_0 oven_1 oven_2 oven_3 oven_4 oven_5 oven_6 oven_7 oven_8 oven_9 oven_10 oven_11 oven_12 oven_13 oven_14 oven_15 oven_16 - oven
+      brick_0 brick_1 brick_2 - brick
+      temp_0 temp_1 - temperature
+   )
+
+   (:htn
+      :parameters ()
+      :subtasks (and
+         (task0 (dry brick_0))
+         (task1 (dry brick_1))
+         (task2 (dry brick_2))
+      )
+   )
+
+   (:init
+      (oven-cold oven_0)
+      (oven-cold oven_1)
+      (oven-cold oven_2)
+      (oven-cold oven_3)
+      (oven-cold oven_4)
+      (oven-cold oven_5)
+      (oven-cold oven_6)
+      (oven-cold oven_7)
+      (oven-cold oven_8)
+      (oven-cold oven_9)
+      (oven-cold oven_10)
+      (oven-cold oven_11)
+      (oven-cold oven_12)
+      (oven-cold oven_13)
+      (oven-cold oven_14)
+      (oven-cold oven_15)
+      (oven-cold oven_16)
+      (brick-spec brick_0 temp_1)
+      (brick-spec brick_1 temp_0)
+      (brick-spec brick_2 temp_0)
+   )
+)

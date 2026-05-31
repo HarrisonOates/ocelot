@@ -1,0 +1,31 @@
+; num_nurse: 3
+; num_doctor: 3
+; num_patient: 7
+; num_toolset: 6
+
+(define
+   (problem pfile16)
+   (:domain medical)
+   (:objects
+      nurse_0 nurse_1 nurse_2 - nurse
+      doctor_0 doctor_1 doctor_2 - doctor
+      patient_0 patient_1 patient_2 patient_3 patient_4 patient_5 patient_6 - patient
+      toolset_0 toolset_1 toolset_2 toolset_3 toolset_4 toolset_5 - toolset
+   )
+
+   (:htn
+      :parameters ()
+      :subtasks (and
+         (task0 (operate patient_0))
+         (task1 (operate patient_1))
+         (task2 (operate patient_2))
+         (task3 (operate patient_3))
+         (task4 (operate patient_4))
+         (task5 (operate patient_5))
+         (task6 (operate patient_6))
+      )
+   )
+
+   (:init
+   )
+)

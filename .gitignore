@@ -1,0 +1,22 @@
+./pandaPIengine/build/*
+./pandaPIgrounder/pandaPIgrounder/*
+./pandaPIgrounder/pandaPIgrounder
+
+# Python cache
+scripts/__pycache__/
+
+# Test artifacts
+scripts/*.htn
+scripts/*.sas
+scripts/*.original
+scripts/*.actual
+scripts/*.wcnf
+scripts/*.wcnf.map
+scripts/*.sol
+scripts/*.log
+scripts/*.stats
+scripts/htnorder_debug.log
+scripts/test_*
+scripts/results.csv
+
+

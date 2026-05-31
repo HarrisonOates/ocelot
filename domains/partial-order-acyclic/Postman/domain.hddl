@@ -1,0 +1,144 @@
+; all locations are interconnected
+; postman carries mail in a bag of holding
+; postman first must move to the location of the mail pick it up then move to destination and deliver it
+; concurrent only when there are multiple mailmans. No real advantage to concurrent plan apart from flexibility
+(define (domain postman)
+
+	(:requirements :negative-preconditions :hierarchy :typing :method-preconditions :equality)
+
+	(:types
+		mail postman - object
+		location
+
+	)
+
+	(:predicates
+		(at ?o - object ?l - location)
+		(in-bag ?m - mail ?p - postman)
+		(delivered ?m - mail)
+		
+	)
+
+	(:task deliver
+		:parameters (?m - mail ?l - location)
+	)
+
+	(:task get_mail
+		:parameters (?m - mail ?p - postman)
+	)
+
+	(:task move
+		:parameters (?p - postman ?l - location)
+	)
+
+	(:method m0_deliver
+		:parameters (?m - mail ?p - postman ?l - location)
+		:task (deliver ?m ?l)
+		:precondition (and 
+			(not (delivered ?m))
+		)
+		:ordered-subtasks(and
+			(task0 (get_mail ?m ?p))
+			(task1 (move ?p ?l))
+			(task2 (do_deliver ?m ?p ?l))
+		)
+	)
+
+	(:method m0_get_mail
+		:parameters (?m - mail ?p - postman ?pLoc - location ?mLoc - location)
+		:task (get_mail ?m ?p)
+		:precondition (and
+			(at ?m ?mLoc)
+			(at ?p ?pLoc)
+			(not (= ?pLoc ?mLoc))
+		)
+		:ordered-subtasks(and
+			(task0 (do_move ?p ?pLoc ?mLoc))
+			(task1 (do_pick_up ?m ?p ?mLoc))
+		)
+	)
+	(:method m1_get_mail
+		:parameters (?m - mail ?p - postman ?pLoc - location ?mLoc - location)
+		:task (get_mail ?m ?p)
+		:precondition (and
+			(at ?m ?mLoc)
+			(at ?p ?pLoc)
+			(= ?pLoc ?mLoc)
+		)
+		:ordered-subtasks(and
+			(task1 (do_pick_up ?m ?p ?mLoc))
+		)
+	)
+
+	(:method m0_move
+		:parameters (?p - postman ?from - location ?to - location)
+		:task (move ?p ?to)
+		:precondition (and
+			(at ?p ?from)
+			(not (= ?from ?to))
+		)
+		:subtasks(and
+			(task0 (do_move ?p ?from ?to))
+		)
+	)
+
+	(:method m1_move
+		:parameters (?p - postman ?from - location ?to - location)
+		:task (move ?p ?to)
+		:precondition (and
+			(at ?p ?from)
+			(= ?from ?to)
+		)
+		:subtasks(and
+			(task0 (nop))
+		)
+	)
+
+
+	(:action do_move
+		:parameters (?p - postman ?from - location ?to - location)
+		:precondition (and
+			(at ?p ?from)
+			(not (at ?p ?to))
+		)
+		:effect (and
+			(not (at ?p ?from))
+			(at ?p ?to)
+		)
+	)
+
+
+	(:action do_pick_up
+		:parameters (?m - mail ?p - postman ?loc - location)
+		:precondition (and
+			(at ?p ?loc)
+			(at ?m ?loc)
+		)
+		:effect (and
+			(not (at ?m ?loc))
+			(in-bag ?m ?p)
+		)
+	)
+
+	(:action do_deliver
+		:parameters (?m - mail ?p - postman ?l - location)
+		:precondition (and
+			(at ?p ?l)
+			(in-bag ?m ?p)
+		)
+		:effect (and
+			(at ?m ?l)
+			(not (in-bag ?m ?p))
+			(delivered ?m)
+		)
+	)
+
+
+	(:action nop
+		:parameters ()
+		:precondition ()
+		:effect ()
+	)
+)
+
+	

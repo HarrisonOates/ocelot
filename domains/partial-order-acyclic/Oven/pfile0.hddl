@@ -1,0 +1,32 @@
+; num_oven: 2
+; num_brick: 4
+; num_temp: 2
+
+(define
+   (problem pfile0)
+   (:domain postman)
+   (:objects
+      oven_0 oven_1 - oven
+      brick_0 brick_1 brick_2 brick_3 - brick
+      temp_0 temp_1 - temperature
+   )
+
+   (:htn
+      :parameters ()
+      :subtasks (and
+         (task0 (dry brick_0))
+         (task1 (dry brick_1))
+         (task2 (dry brick_2))
+         (task3 (dry brick_3))
+      )
+   )
+
+   (:init
+      (oven-cold oven_0)
+      (oven-cold oven_1)
+      (brick-spec brick_0 temp_0)
+      (brick-spec brick_1 temp_1)
+      (brick-spec brick_2 temp_0)
+      (brick-spec brick_3 temp_0)
+   )
+)
