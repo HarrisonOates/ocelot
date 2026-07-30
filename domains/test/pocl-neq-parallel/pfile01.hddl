@@ -1,0 +1,16 @@
+; Two unordered tasks, one action each. Nothing requires p, so a1 and a2 are
+; threat-free and the correct makespan is 1. See domain.hddl.
+(define (problem pfile01)
+    (:domain pocl_neq_parallel)
+
+    (:htn
+        :parameters ()
+        :subtasks (and
+            (task0 (do_a1))
+            (task1 (do_a2))
+        )
+    )
+
+    (:init
+    )
+)

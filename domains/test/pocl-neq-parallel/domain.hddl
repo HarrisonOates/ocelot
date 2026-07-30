@@ -1,0 +1,62 @@
+; Regression test for threat-free parallelism.
+;
+;   a1 = (pre {},  add {g, p}, del {})
+;   a2 = (pre {},  add {q},    del {p})
+;   init = {}
+;
+; a2 deletes p, but *nothing* has p as a precondition, so there is no causal
+; link on p and therefore no threat to resolve. a1 and a2 must be left unordered
+; and the makespan must be 1, not 2.
+;
+; This distinguishes link-level threat resolution (correct here) from a
+; fact-level producer/deleter mutex, which would wrongly report 2. Note that a
+; strict forall-step parallel semantics would also report 2, since a1 and a2 do
+; interfere on p -- that is deliberately not the semantics this project uses.
+(define (domain pocl_neq_parallel)
+    (:requirements :hierarchy :negative-preconditions :typing :method-preconditions)
+
+    (:predicates
+        (g)
+        (p)
+        (q)
+    )
+
+    (:task do_a1 :parameters ())
+    (:task do_a2 :parameters ())
+
+    (:method m_a1
+        :parameters ()
+        :task (do_a1)
+        :precondition ()
+        :ordered-subtasks (and
+            (a1)
+        )
+    )
+
+    (:method m_a2
+        :parameters ()
+        :task (do_a2)
+        :precondition ()
+        :ordered-subtasks (and
+            (a2)
+        )
+    )
+
+    (:action a1
+        :parameters ()
+        :precondition (and)
+        :effect (and
+            (g)
+            (p)
+        )
+    )
+
+    (:action a2
+        :parameters ()
+        :precondition (and)
+        :effect (and
+            (q)
+            (not (p))
+        )
+    )
+)
