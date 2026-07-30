@@ -23,4 +23,13 @@ scripts/htnorder_debug.log
 scripts/test_*
 scripts/results.csv
 
-
+# Artifacts when running from top-level directory
+*.htn
+*.sas
+*.original
+*.actual
+*.wcnf
+*.wcnf.map
+*.sol
+*.log
+*.stats
