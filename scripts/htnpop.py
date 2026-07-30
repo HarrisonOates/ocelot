@@ -54,8 +54,10 @@ def lift_plan_to_pop(domain_content: str, problem_content: str, trace_content: s
 
     # --- Part 1: Parse all necessary data ---
     print("Parsing files...")
-    initial_state = {tuple(lit) for lit in htnorder.get_initial_state(problem_content)}
     grounded_actions_map = htnorder.get_grounded_actions_from_trace(domain_content, trace_content)
+    # Includes the closed-world `-predicate` facts that compiled-away negative
+    # preconditions depend on, so those preconditions have a producer.
+    initial_state = htnorder.get_initial_state_with_negatives(problem_content, grounded_actions_map)
     htn_constraints = htnorder.find_implied_constraints(trace_content, domain_content, problem_content)
     
     # The trace gives us a linear sequence of action IDs. We must process them in this order.
@@ -148,6 +150,7 @@ def lift_plan_to_pop(domain_content: str, problem_content: str, trace_content: s
 
     # --- Part 3: Augment the POP with the mandatory HTN ordering constraints ---
     print(f"Augmenting POP with {len(htn_constraints)} mandatory HTN constraints...")
+    htn_order_edges = set()
     for act_id1, act_id2 in htn_constraints:
         if act_id1 in id_to_action_obj and act_id2 in id_to_action_obj:
             action1 = id_to_action_obj[act_id1]
@@ -155,6 +158,33 @@ def lift_plan_to_pop(domain_content: str, problem_content: str, trace_content: s
             # Add the link if it doesn't already exist to avoid clutter
             if not pop.network.has_edge(action1, action2):
                 pop.link_actions(action1, "htn_order", action2)
+                htn_order_edges.add((action1, action2))
+
+    # htn_order constraints are reconstructed (in htnorder.find_implied_constraints)
+    # from the HTN's own declared structure, including a fallback that infers a
+    # dependency from a single unambiguous fact producer when a subtask resolves
+    # to zero primitives. That fallback can conflict with a causal link derived
+    # independently above (both routing through the same shared action from
+    # opposite directions), producing a cycle. Causal links are the ground truth
+    # here (they come directly from the actions' own preconditions/effects), so
+    # if combining the two produces a cycle, drop the minimal set of htn_order
+    # edges responsible rather than leave the POP unsatisfiable.
+    if htn_order_edges:
+        removed = 0
+        while True:
+            try:
+                cycle = nx.find_cycle(pop.network)
+            except nx.NetworkXNoCycle:
+                break
+            edge_to_drop = next(((u, v) for u, v in cycle if (u, v) in htn_order_edges), None)
+            if edge_to_drop is None:
+                print("WARNING: cycle found with no htn_order edge to drop", file=sys.stderr)
+                break
+            pop.unlink_actions(edge_to_drop[0], "htn_order", edge_to_drop[1])
+            htn_order_edges.discard(edge_to_drop)
+            removed += 1
+        if removed:
+            print(f"Removed {removed} htn_order edge(s) to break cycle(s) with causal links.")
 
     # --- Part 4: Finalize the graph ---
     print("Finalizing graph and connecting all nodes to init and goal...")

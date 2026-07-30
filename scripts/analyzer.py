@@ -43,6 +43,7 @@ def extract_pop(mapping, output):
     actions = set()
     orderings = []
     supports = []
+    starts = {}
 
     for v in [x for x in values if '-' not in x]:
         if 'in plan' in mapping[v]:
@@ -54,6 +55,9 @@ def extract_pop(mapping, output):
         elif 'supports' in mapping[v]:
             parts = mapping[v].split(' supports ')
             supports.append((parts[0], parts[1].split(' for ')[0], parts[1].split(' for ')[1]))
+        elif ' starts at ' in mapping[v]:
+            act, t = mapping[v].split(' starts at ')
+            starts[act] = int(t)
         else:
             pass # These are auxiliary variables
             # print("Error: Unrecognized mapping line: %s" % mapping[v])
@@ -75,18 +79,27 @@ def extract_pop(mapping, output):
     #            print a1
     #            print a2
 
-    return pop, optimal
+    return pop, optimal, starts
 
-def calculate_graph_statistics(pop):
+def calculate_graph_statistics(pop, starts=None):
     """
     Takes a POP object, builds a graph, and calculates key metrics.
     Assumes pop object has .actions (a list/set) and .get_links() which
     returns a list of (action1, action2) ordering tuples.
+
+    If `starts` (a dict of action name -> start timestep, as solved by the
+    MaxSAT encoding's Start(a,t) variables) is provided, the makespan is
+    computed directly from those solved start times rather than from the
+    longest path in the extracted Order graph. The Order graph only contains
+    edges the solver was *forced* to set true (by HTN/support/threat
+    constraints); it is not guaranteed to contain an edge for every pair of
+    actions the solver happened to schedule sequentially, so its longest path
+    can understate the makespan the solver actually optimized for.
     """
     stats = {}
-    
+
     # --- 1. Build the Graph from the POP object ---
-    G = pop.network 
+    G = pop.network
     # Assuming pop.actions is an iterable of action name strings
 
     # --- 2. Basic Statistics ---
@@ -101,30 +114,34 @@ def calculate_graph_statistics(pop):
         return stats
 
     try:
-        # The longest path gives us the critical path of the plan
-        critical_path_nodes = nx.dag_longest_path(G)
-        
-        # Makespan is the number of actual plan actions on this critical path.
-        # This correctly excludes init/goal from the time calculation.
-        critical_path_actions = [n for n in critical_path_nodes if 'init#' not in n and 'goal#' not in n]
-        stats['makespan'] = len(critical_path_actions)
-        
+        if starts:
+            # Authoritative: the makespan the MaxSAT solver actually optimized.
+            real_starts = [t for a, t in starts.items() if 'init#' not in a and 'goal#' not in a]
+            stats['makespan'] = (max(real_starts) + 1) if real_starts else 0
+        else:
+            # Fallback for callers with no solved Start(a,t) assignments
+            # (e.g. a pre-solve POP): use the causal/ordering graph's
+            # longest path as the best available estimate.
+            critical_path_nodes = nx.dag_longest_path(G)
+            critical_path_actions = [n for n in critical_path_nodes if 'init#' not in n and 'goal#' not in n]
+            stats['makespan'] = len(critical_path_actions)
+
         # Parallelism = total actions / makespan. A score of 1.0 is sequential.
         if stats['makespan'] > 0:
             stats['parallelism'] = stats['num_actions'] / stats['makespan']
         else:
             stats['parallelism'] = 0.0
-            
+
     except nx.NetworkXError:
         # This can happen if the graph is not connected (e.g., no path from init to goal)
         stats['makespan'] = 'N/A (disjointed plan)'
         stats['parallelism'] = 0.0
-        
+
     return stats
 
 def do_popstats(mapping, output, show_linears = False):
 
-    pop, optimal = extract_pop(mapping, output)
+    pop, optimal, starts = extract_pop(mapping, output)
 
     if show_linears:
         print("\nLinearizations: %d\n" % count_linearizations(pop))
@@ -132,7 +149,7 @@ def do_popstats(mapping, output, show_linears = False):
     print("\n%s\n" % str(pop))
     print("Optimal: %s\n" % str(optimal))
 
-    stats = calculate_graph_statistics(pop)
+    stats = calculate_graph_statistics(pop, starts)
     print("\n--- Plan Quality Metrics ---")
     print(f"Number of Actions: {stats.get('num_actions', 'N/A')}")
     print(f"Number of Orderings: {stats.get('num_orderings', 'N/A')}")
@@ -162,12 +179,12 @@ if __name__ == '__main__':
         do_popstats(get_mapping(args.map), args.rc2out, args.count_linearizations)
 
     if args.dot:
-        pop, _ = extract_pop(get_mapping(args.map), args.rc2out)
+        pop, _, _ = extract_pop(get_mapping(args.map), args.rc2out)
         with open(args.dot, 'w') as f:
             f.write(pop.dot())
 
     if args.compactdot:
-        pop, _ = extract_pop(get_mapping(args.map), args.rc2out)
+        pop, _, _ = extract_pop(get_mapping(args.map), args.rc2out)
         with open(args.compactdot, 'w') as f:
             f.write(pop.dot(compact=True))
 

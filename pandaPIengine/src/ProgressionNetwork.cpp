@@ -107,6 +107,8 @@ searchNode::~searchNode() {
 	delete[] containedTasks;
 	delete[] containedTaskCount;
 	delete[] factEarliestTrue;
+	delete[] factLatestDeleted;
+	delete[] factLastNeeded;
 	delete taskEarliestStart;
 	delete pendingObservationPredecessors;
 

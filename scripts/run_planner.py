@@ -84,6 +84,33 @@ def parse_engine_output(stdout: str) -> dict:
     return {"nodes": nodes, "nodes_per_sec": nodes_per_sec, "makespan": makespan}
 
 
+def parse_analyzer_output(stdout: str) -> dict:
+    """Extract the final, POP-derived makespan and action count from analyzer.py's output.
+
+    This is the actual optimized/verified plan quality (from the solved MaxSAT
+    schedule), as opposed to the engine's own internal search g-value parsed by
+    parse_engine_output -- the two can differ and only this one is the real
+    answer to report to a user.
+    """
+    makespan = None
+    num_actions = None
+    optimal = None
+
+    m = re.search(r"Makespan \(Critical Path Length\):\s*(\d+)", stdout)
+    if m:
+        makespan = int(m.group(1))
+
+    m = re.search(r"Number of Actions:\s*(\d+)", stdout)
+    if m:
+        num_actions = int(m.group(1))
+
+    m = re.search(r"Optimal:\s*(True|False)", stdout)
+    if m:
+        optimal = (m.group(1) == "True")
+
+    return {"makespan": makespan, "num_actions": num_actions, "optimal": optimal}
+
+
 def run_step(step_name: str, cmd: list, log_path: Path, stdout_file: Path = None,
              cwd: Path = None, memory_limit_mb: int = None) -> subprocess.CompletedProcess:
     """Run cmd timed with /usr/bin/time, appending to log_path."""
@@ -177,6 +204,10 @@ def run_pipeline(domain: Path, problem: Path, basename: Path,
     if r.returncode != 0:
         raise RuntimeError(f"Analysis failed:\n{r.stderr.strip()}")
 
+    analyzer_stats = parse_analyzer_output(stats_file.read_text())
+    if analyzer_stats["makespan"] is None:
+        raise RuntimeError(f"Could not parse final makespan from {stats_file}")
+
     timing = parse_timing_log(log)
     total = sum(v["wall_s"] for v in timing.values())
     search_s = timing.get("InitialEngine", {}).get("wall_s", 0.0)
@@ -184,7 +215,8 @@ def run_pipeline(domain: Path, problem: Path, basename: Path,
     return {
         "nodes": engine_stats["nodes"],
         "nodes_per_sec": engine_stats["nodes_per_sec"],
-        "makespan": engine_stats["makespan"],
+        "makespan": analyzer_stats["makespan"],
+        "engine_makespan": engine_stats["makespan"],
         "search_s": search_s,
         "total_s": total,
     }

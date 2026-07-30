@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync Python environment
+        run: uv sync --group dev
+
+      - name: Run unit tests
+        run: uv run pytest -m "not e2e" -v
+
+  e2e:
+    name: Makespan regression (end-to-end)
+    runs-on: ubuntu-latest
+    # The C++ build (cpddl in particular) dominates the runtime; the planner
+    # runs themselves are ~60s total.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake gengetopt flex bison
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # The three binaries are pure functions of the C++ sources plus the
+      # pinned submodule revisions, so key the cache on exactly those. build.sh
+      # is idempotent: it skips any component whose binary is already present.
+      - name: Cache planner binaries
+        id: cache-binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            pandaPIparser/pandaPIparser
+            pandaPIengine/build/pandaPIengine
+            pandaPIgrounder/pandaPIgrounder
+            pandaPIgrounder/cpddl
+          key: >-
+            binaries-${{ runner.os }}-${{ hashFiles('build.sh', '.gitmodules',
+            'pandaPIparser/makefile', 'pandaPIparser/src/**',
+            'pandaPIengine/src/**', 'pandaPIgrounder/src/**') }}
+
+      - name: Build C++ components
+        run: ./build.sh
+
+      - name: Verify binaries exist
+        run: |
+          set -e
+          for b in pandaPIparser/pandaPIparser \
+                   pandaPIengine/build/pandaPIengine \
+                   pandaPIgrounder/pandaPIgrounder; do
+            test -x "$b" || { echo "missing binary: $b"; exit 1; }
+          done
+
+      - name: Sync Python environment
+        run: uv sync --group dev
+
+      - name: Run makespan regression tests
+        run: uv run pytest -m e2e -v
+
+      - name: Upload planner output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: planner-output
+          path: |
+            /tmp/pytest-of-*/**/*.original
+            /tmp/pytest-of-*/**/*.stats
+            /tmp/pytest-of-*/**/*.actual
+            /tmp/pytest-of-*/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7

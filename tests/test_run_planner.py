@@ -14,7 +14,8 @@ def test_resolve_tool_paths_defaults(monkeypatch):
     paths = resolve_tool_paths(PANDA_ROOT, engine=None, parser=None, grounder=None)
     assert paths["engine"] == PANDA_ROOT / "pandaPIengine" / "build" / "pandaPIengine"
     assert paths["parser"] == PANDA_ROOT / "pandaPIparser" / "pandaPIparser"
-    assert paths["grounder"] == PANDA_ROOT / "scripts" / "pandaPIgrounder"
+    # build.sh installs the grounder next to its own sources, not under scripts/
+    assert paths["grounder"] == PANDA_ROOT / "pandaPIgrounder" / "pandaPIgrounder"
 
 
 def test_resolve_tool_paths_override(tmp_path):

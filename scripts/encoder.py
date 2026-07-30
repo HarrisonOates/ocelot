@@ -189,13 +189,22 @@ def encode_POP(pop, cmdargs):
             for t2 in range(t1 + 1, horizon):
                 clauses.append((~start_vars[(a, t1)]) | (~start_vars[(a, t2)]))
 
-    # Enforce precedence respecting unit-duration tasks
+    # Enforce precedence respecting unit-duration tasks.
+    # `init` is a zero-duration bookkeeping step representing the initial
+    # state, not a real unit-duration action: its successors only need to
+    # start at or after init's own start (t1), not strictly after it, since
+    # every initial-state fact is already available at that instant. Without
+    # this, `Order(init, a)` (forced for every real action) combines with the
+    # general unit-duration precedence rule to push every action's start
+    # back by one full timestep for no causal reason, inflating the
+    # computed makespan by exactly 1.
     for a1 in A:
         for a2 in A:
             if a1 is a2:
                 continue
             for t1 in range(horizon):
-                for t2 in range(t1 + 1):
+                forbidden_times = range(t1) if a1 is init else range(t1 + 1)
+                for t2 in forbidden_times:
                     clauses.append((~Order(a1, a2)) | (~start_vars[(a1, t1)]) | (~start_vars[(a2, t2)]))
 
     # Makespan monotonicity and linkage to finish times (duration 1)

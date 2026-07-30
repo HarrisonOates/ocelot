@@ -619,6 +619,8 @@ newlyReachedMLMs = new noDelIntSet();
 		result->state = n->state;
 		result->planMakespan = n->planMakespan;
 		result->factEarliestTrue = new int[numStateBits];
+		result->factLatestDeleted = new int[numStateBits];
+		result->factLastNeeded = new int[numStateBits];
 		if (n->factEarliestTrue != nullptr) {
 			std::copy(n->factEarliestTrue, n->factEarliestTrue + numStateBits, result->factEarliestTrue);
 		} else {
@@ -626,7 +628,17 @@ newlyReachedMLMs = new noDelIntSet();
 				result->factEarliestTrue[i] = result->state[i] ? 0 : parallelInf;
 			}
 		}
-		
+		if (n->factLatestDeleted != nullptr) {
+			std::copy(n->factLatestDeleted, n->factLatestDeleted + numStateBits, result->factLatestDeleted);
+		} else {
+			std::fill(result->factLatestDeleted, result->factLatestDeleted + numStateBits, 0);
+		}
+		if (n->factLastNeeded != nullptr) {
+			std::copy(n->factLastNeeded, n->factLastNeeded + numStateBits, result->factLastNeeded);
+		} else {
+			std::fill(result->factLastNeeded, result->factLastNeeded + numStateBits, 0);
+		}
+
 		// Copy HTN ordering constraints
 		if (n->taskEarliestStart != nullptr) {
 			result->taskEarliestStart = new std::map<int, int>(*n->taskEarliestStart);
@@ -1063,12 +1075,24 @@ newlyReachedMLMs = new noDelIntSet();
 		assert(isPrimitive[progressed->task]);
 		result->state = n->state;
 		result->factEarliestTrue = new int[numStateBits];
+		result->factLatestDeleted = new int[numStateBits];
+		result->factLastNeeded = new int[numStateBits];
 		if (n->factEarliestTrue != nullptr) {
 			std::copy(n->factEarliestTrue, n->factEarliestTrue + numStateBits, result->factEarliestTrue);
 		} else {
 			for (int i = 0; i < numStateBits; ++i) {
 				result->factEarliestTrue[i] = result->state[i] ? 0 : parallelInf;
 			}
+		}
+		if (n->factLatestDeleted != nullptr) {
+			std::copy(n->factLatestDeleted, n->factLatestDeleted + numStateBits, result->factLatestDeleted);
+		} else {
+			std::fill(result->factLatestDeleted, result->factLatestDeleted + numStateBits, 0);
+		}
+		if (n->factLastNeeded != nullptr) {
+			std::copy(n->factLastNeeded, n->factLastNeeded + numStateBits, result->factLastNeeded);
+		} else {
+			std::fill(result->factLastNeeded, result->factLastNeeded + numStateBits, 0);
 		}
 
 		std::vector<int> inheritedObservationPredecessors;
@@ -1130,6 +1154,41 @@ newlyReachedMLMs = new noDelIntSet();
 		}
 	}
 	
+	// Threat resolution against already-scheduled actions. Without these two
+	// checks the tracked value is not the makespan of any valid plan: nothing
+	// stops the schedule from placing an action that deletes a fact in the same
+	// step as an action that produces or consumes that same fact, so planMakespan
+	// can come out strictly below the plan's true makespan.
+	//
+	// Both checks are gated on the fact being consumable at all (precondition of
+	// some action in the grounded model). A fact nobody can ever require carries
+	// no causal link, so no threat exists to resolve and ordering a producer and
+	// a deleter of it would be pure over-constraint -- see
+	// domains/test/pocl-neq-parallel, where a1 adds {p,q}, a2 adds {g} deletes
+	// {p}, and nothing requires p, so the two are genuinely concurrent.
+	for (int i = 0; i < numAdds[progressed->task]; ++i) {
+		int fact = addLists[progressed->task][i];
+		// a fact cannot be re-established before the action that deleted it finished
+		if (precToActionSize[fact] > 0 && n->factLatestDeleted != nullptr
+				&& n->factLatestDeleted[fact] > earliestStart) {
+			earliestStart = n->factLatestDeleted[fact];
+		}
+	}
+	for (int i = 0; i < numDels[progressed->task]; ++i) {
+		int fact = delLists[progressed->task][i];
+		if (precToActionSize[fact] == 0) continue;
+		// a fact cannot be destroyed before the action that produced it finished
+		if (n->factEarliestTrue != nullptr && n->factEarliestTrue[fact] != parallelInf
+				&& n->factEarliestTrue[fact] > earliestStart) {
+			earliestStart = n->factEarliestTrue[fact];
+		}
+		// ...nor before the last action that needed it finished, otherwise the
+		// delete would threaten that action's support for this fact
+		if (n->factLastNeeded != nullptr && n->factLastNeeded[fact] > earliestStart) {
+			earliestStart = n->factLastNeeded[fact];
+		}
+	}
+
 	int finish = earliestStart + 1;
     if (taskNames[progressed->task].rfind("__", 0) == 0) finish = earliestStart;
 	
@@ -1152,17 +1211,25 @@ newlyReachedMLMs = new noDelIntSet();
 		          << " parent_makespan=" << n->planMakespan << std::endl;
 	}
 
+	// Record when each precondition was last needed. This used to be written into
+	// factEarliestTrue itself ("holding" the fact until this action finished),
+	// which serialised every *reader* of a fact against every other reader -- two
+	// actions merely reading the same fact are not in conflict, so that inflated
+	// the makespan (in Rover, `at[rover0,waypoint2]` was pushed 3->4->5->6 by
+	// successive readers, costing three spurious steps). Keeping it in a separate
+	// array preserves the one thing the hold was needed for -- ordering a deleter
+	// of a fact after the actions that read it, see the threat checks above --
+	// without ordering readers against each other.
 	if (!factIsStatic.empty()) {
 		for (int i = 0; i < numPrecs[progressed->task]; ++i) {
 			int prec = precLists[progressed->task][i];
 			if (prec < 0 || prec >= numStateBits) continue;
 			if (!factIsStatic[prec] && (factIsOrderingIndicator.empty() || !factIsOrderingIndicator[prec])) {
-				int currentAvailability = result->factEarliestTrue[prec];
-				if (currentAvailability != parallelInf && currentAvailability < finish) {
-					result->factEarliestTrue[prec] = finish;
+				if (finish > result->factLastNeeded[prec]) {
+					result->factLastNeeded[prec] = finish;
 					if (enableMakespanTrace) {
-						std::cerr << "[makespan-hold] " << factStrs[prec]
-						          << " locked until " << finish << " by "
+						std::cerr << "[makespan-lastneeded] " << factStrs[prec]
+						          << " needed until " << finish << " by "
 						          << taskNames[progressed->task] << std::endl;
 					}
 				}
@@ -1174,6 +1241,9 @@ newlyReachedMLMs = new noDelIntSet();
 			int fact = delLists[progressed->task][i];
 			result->state[fact] = false;
 			result->factEarliestTrue[fact] = parallelInf;
+			if (finish > result->factLatestDeleted[fact]) {
+				result->factLatestDeleted[fact] = finish;
+			}
 			if (enableMakespanTrace) {
 				std::cerr << "[makespan-delete] " << taskNames[progressed->task]
 				          << " deletes " << factStrs[fact] << std::endl;
@@ -2905,9 +2975,13 @@ newlyReachedMLMs = new noDelIntSet();
 		tnI->mixedModificationDepth = 0;
 		tnI->planMakespan = 0;
 		tnI->factEarliestTrue = new int[htn->numStateBits];
+		tnI->factLatestDeleted = new int[htn->numStateBits];
+		tnI->factLastNeeded = new int[htn->numStateBits];
 		const int parallelInf = std::numeric_limits<int>::max() / 4;
 		for (int i = 0; i < htn->numStateBits; ++i) {
 			tnI->factEarliestTrue[i] = tnI->state[i] ? 0 : parallelInf;
+			tnI->factLatestDeleted[i] = 0;
+			tnI->factLastNeeded[i] = 0;
 		}
 		tnI->taskEarliestStart = new std::map<int, int>();  // Initially empty - no ordering constraints yet
 		tnI->pendingObservationPredecessors = new std::unordered_map<int, std::vector<int>>();

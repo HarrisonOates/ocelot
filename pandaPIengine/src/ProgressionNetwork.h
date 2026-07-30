@@ -101,6 +101,17 @@ struct searchNode {
 	int hRand;
 	int planMakespan = 0;
 	int* factEarliestTrue = nullptr;
+	// Finish time of the most recent action that deleted a fact. Needed to keep
+	// the makespan exact: an action that (re-)adds a fact must not be scheduled
+	// concurrently with, or before, the action that deleted it. factEarliestTrue
+	// alone cannot express this -- a delete sets it to parallelInf, losing the
+	// time at which the delete happened.
+	int* factLatestDeleted = nullptr;
+	// Finish time of the most recent action that had a fact as a precondition.
+	// A later deleter of the fact must be ordered after it, or it would threaten
+	// that action's support. Kept separate from factEarliestTrue so that readers
+	// of a fact are not serialised against each other.
+	int* factLastNeeded = nullptr;
 	std::map<int, int>* taskEarliestStart = nullptr; // maps planStep ID to earliest start time due to HTN orderings
 	int observationCount = 0;
 	std::unordered_map<int, std::vector<int>>* pendingObservationPredecessors = nullptr;
