@@ -77,10 +77,11 @@ uint64_t hash_state_sequence(const vector<uint64_t> & state){
 
 
 
-VisitedList::VisitedList(Model *m, bool _noVisitedCheck, bool _noReOpening, bool _taskHash, bool _taskSequenceHash, bool _topologicalOrdering, bool _orderPairs, bool _layers, bool _allowGIcheck, bool _allowedToUseParallelSequences) {
+VisitedList::VisitedList(Model *m, bool _noVisitedCheck, bool _noReOpening, aStar _costMode, bool _taskHash, bool _taskSequenceHash, bool _topologicalOrdering, bool _orderPairs, bool _layers, bool _allowGIcheck, bool _allowedToUseParallelSequences) {
     this->htn = m;
 	this->noVisitedCheck = _noVisitedCheck;
 	this->noReopening = _noReOpening;
+	this->costMode = _costMode;
 	this->GIcheck = _allowGIcheck;
 
 	// auto detect properties of the problem
@@ -130,6 +131,17 @@ VisitedList::VisitedList(Model *m, bool _noVisitedCheck, bool _noReOpening, bool
 	}
 	cout << "- Visited list allows deletion of search nodes: " << ((this->canDeleteProcessedNodes) ? "true" : "false")
          << endl;
+}
+
+int VisitedList::routeCost(searchNode *n) const {
+	switch (costMode) {
+		case gValPathCosts: return n->modificationDepth;
+		case gValActionCosts: return n->actionCosts;
+		case gValActionPathCosts: return n->mixedModificationDepth;
+		case gValMakespan: return n->planMakespan;
+		case gValNone: return 0;
+	}
+	return 0;
 }
 
 
@@ -541,7 +553,7 @@ bool VisitedList::insertVisi(searchNode *n) {
 		if (noReopening){
 			*payload = (void*) 1; // know the hash is known
 		} else {
-			int costOfInsertedNode = n->fValue + 1; // add 1 to distinguish f=0 from no search node at all.
+			int costOfInsertedNode = routeCost(n) + 1; // add 1 to distinguish g=0 from no search node at all.
 			int costInTree = *(int*)payload;
 
 			if (costInTree > costOfInsertedNode) // re-opening of the node
@@ -568,7 +580,7 @@ bool VisitedList::insertVisi(searchNode *n) {
 			//cout << endl << endl << "Comp " << result << endl;
 			//other->printNode(cout);
 			if (result) {
-				if (other->fValue > n->fValue){
+				if (routeCost(other) > routeCost(n)){
 					toRemove = other;
 					continue;
 				}

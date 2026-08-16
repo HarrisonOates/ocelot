@@ -455,7 +455,7 @@ int main(int argc, char *argv[]) {
 		bool layerHash = args_info.noLayers_flag;
 		bool allowParalleSequencesMode = args_info.noParallelSequences_flag;
     	
-		VisitedList visi(htn,noVisitedList, suboptimalSearch, taskHash, taskSequenceHash, topologicalOrdering, orderPairsHash, layerHash, allowGIcheck, allowParalleSequencesMode);
+		VisitedList visi(htn,noVisitedList, suboptimalSearch, aStarType, taskHash, taskSequenceHash, topologicalOrdering, orderPairsHash, layerHash, allowGIcheck, allowParalleSequencesMode);
     	PriorityQueueSearch search;
     	OneQueueWAStarFringe fringe(aStarType, aStarWeight, hLength);
 
@@ -624,4 +624,3 @@ int main(int argc, char *argv[]) {
     lmc->prettyPrintLMs();
 
 	exit(17);*/
-

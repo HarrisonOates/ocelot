@@ -5,6 +5,7 @@
 #include "../ProgressionNetwork.h"
 #include <unordered_map>
 #include "../intDataStructures/HashTable.h"
+#include "search/fringes/OneQueueWAStarFringe.h"
 
 
 // XXX magic number, restricts number of copies of a task per task net to 255, thereafter the hash becomes incorrect
@@ -15,7 +16,7 @@ const int max_task_count = (1 << (1 << number_of_bits_for_task_count)) - 1;
 using namespace progression;
 
 struct VisitedList{
-	VisitedList(Model *m, bool _noVisitedCheck, bool _noReOpening, bool _taskHash, bool _taskSequenceHash, bool _topologicalOrdering, bool _orderPairs, bool _layers, bool _allowGIcheck, bool _allowedToUseParallelSequences);
+	VisitedList(Model *m, bool _noVisitedCheck, bool _noReOpening, aStar _costMode, bool _taskHash, bool _taskSequenceHash, bool _topologicalOrdering, bool _orderPairs, bool _layers, bool _allowGIcheck, bool _allowedToUseParallelSequences);
 	
 	// insert the node into the visited list
 	// @returns true if the node was *new* and false, if the node was already contained in the visited list
@@ -37,6 +38,7 @@ private:
 	// configuration given by the user
 	bool noVisitedCheck;
 	bool noReopening;
+	aStar costMode;
 	bool GIcheck;
 	bool taskHash;
 	bool sequenceHash;
@@ -54,6 +56,7 @@ private:
     vector<int> topSort(searchNode *n);
 
     uint32_t getHash(vector<int> *pVector);
+	int routeCost(searchNode *n) const;
 };
 
 
