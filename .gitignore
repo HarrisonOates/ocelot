@@ -33,3 +33,4 @@ scripts/results.csv
 *.sol
 *.log
 *.stats
+*.layers

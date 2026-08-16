@@ -4,7 +4,7 @@ Ocelot (Optimal Concurrent Execution, Linked Ordered Tasks) is a planning system
 It finds plans that minimise concurrent execution time (makespan) rather than
 sequential plan length.
 
-A description of Ocelot's approach can be found in our HPlan paper [link to be added when live].
+A description of Ocelot's approach can be found in our [HPlan paper](https://bibbase.org/network/publication/oates-bercher-noplanspacenoproblemtowardsmakespanoptimalhtnplanningviaprogressionsearch-2026).
 
 ## Pipeline overview
 
@@ -82,9 +82,10 @@ uv run ocelot domain.hddl problem.hddl output [OPTIONS]
 uv run ocelot domain_dir/ output_dir/   [OPTIONS]
 
 Options:
-  --heuristic TEXT    Heuristic passed to -H  [default: rc2(prefixMakespanFast),rc2(ff)]
-  --g-value TEXT      G-value mode            [default: makespan]
-  --weight INT        A* weight               [default: 1]
+  --heuristic TEXT            Heuristic passed to -H [default: rc2(prefixMakespanFast),rc2(ff)]
+  --g-value TEXT              G-value mode           [default: makespan]
+  --weight INT                A* weight              [default: 1]
+  --semantics ["pocl"|"parallel"] Makespan semantics [default: "pocl"]
   --engine PATH       Override engine binary
   --parser PATH       Override parser binary
   --grounder PATH     Override grounder binary
@@ -128,6 +129,19 @@ Both naive and an incrementally computed phase 1 implementation of $h^{pm}$ is i
 - `rcr(prefixMakespanFast)` is the incremental implementation.
 
 All other heuristics included in $\mathrm{PANDA}_\pi$ are also configurable via the `--heuristic` flag.
+
+## Makespan Semantics
+
+Ocelot is primarily a **POCL-optimal planner**: that is, it optimizes makespan over a Partial-Order Causal Link (POCL) representation of the plan, rather than restricting actions to discrete, lock-step time slices.
+
+We support two distinct scheduling semantics during MaxSAT optimization:
+
+* **POCL Semantics (`--semantics pocl`, default):**
+Orders actions strictly by causal dependencies and threat resolutions. Makespan is defined as the length of the **critical path** through the dependency graph. Non-interfering actions float flexibly in continuous time, eliminating artificial synchronization delays.
+* **Parallel Semantics (`--semantics parallel`):**
+Partitions actions into discrete, synchronized time steps ($t_0, t_1, \dots, t_k$), requiring all actions executed within a step to be mutually non-interfering. Makespan is defined as the **total number of parallel steps**.
+
+As shown in [Oates and Bercher (AAAI 2026)](https://ojs.aaai.org/index.php/AAAI/article/view/40953), the different semantics can result in different optimal plan lengths.
 
 ## Licence
 
