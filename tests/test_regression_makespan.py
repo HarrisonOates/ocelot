@@ -64,7 +64,7 @@ CASES = [
     ("Medical", "pfile2", 6, 10),
     # Rover exercises zero-primitive method decompositions (m-navigate_abs-2)
     # and was where reader serialisation inflated the engine's value 6 -> 8.
-    ("Rover", "pfile01", 6, 12),
+    ("Rover", "pfile01", 6, 10),
     ("Postman", "pfile1", 4, 7),
     ("Barman-BDI", "pfile01", 10, 10),
     ("Oven", "pfile1", 3, 9),

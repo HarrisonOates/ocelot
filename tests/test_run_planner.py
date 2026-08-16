@@ -19,11 +19,18 @@ def test_resolve_tool_paths_defaults(monkeypatch):
 
 
 def test_resolve_tool_paths_override(tmp_path):
-    fake_bin = tmp_path / "myengine"
-    fake_bin.touch()
-    fake_bin.chmod(0o755)
-    paths = resolve_tool_paths(PANDA_ROOT, engine=str(fake_bin), parser=None, grounder=None)
-    assert paths["engine"] == fake_bin
+    fake_bins = {}
+    for name in ("myengine", "myparser", "mygrounder"):
+        fake_bin = tmp_path / name
+        fake_bin.touch()
+        fake_bin.chmod(0o755)
+        fake_bins[name] = fake_bin
+
+    paths = resolve_tool_paths(PANDA_ROOT,
+                               engine=str(fake_bins["myengine"]),
+                               parser=str(fake_bins["myparser"]),
+                               grounder=str(fake_bins["mygrounder"]))
+    assert paths["engine"] == fake_bins["myengine"]
 
 
 def test_resolve_tool_paths_missing_raises(tmp_path):
