@@ -14,6 +14,12 @@
  *   Seeding Phase 2 with later times pushes the RPG estimate up, never below h*.
  *   Phase 2 delete-relaxed RPG remains a valid lower bound.
  *
+ * Phase 2 is h^1_p over the whole relaxed-composition model: an action waits for
+ * every one of its preconditions — the top-down and bottom-up bookkeeping bits
+ * included — and every effect holds when the action finishes. A method action's
+ * preconditions are the bottom-up bits of its subtasks and it takes no time, so
+ * the hierarchy is propagated by the same sweep and needs no separate pass.
+ *
  * Return value: max(0, globalMax - nodeMakespan) — remaining makespan (h-value).
  */
 
@@ -39,13 +45,15 @@ namespace progression {
     protected:
         Model *m;
 
-        // RC bookkeeping detection
-        vector<bool> isRCFact;
+        // Where the RC model's own actions end and its method actions begin
+        int numHtnActions = 0;
 
         // Fact times and node makespan injected by hhRC2 before each call
         int *nodeFactTimes = nullptr;   // pointer to n->factEarliestTrue (not owned)
         int numHtnBits = 0;
         int nodeMakespan = 0;
+
+        int duration(int op) const;
 
     public:
         hsPrefixMakespanFast(Model *htn);

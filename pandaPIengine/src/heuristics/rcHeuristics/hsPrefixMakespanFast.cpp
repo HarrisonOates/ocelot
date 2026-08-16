@@ -4,67 +4,74 @@
 
 #include "hsPrefixMakespanFast.h"
 #include <algorithm>
+#include <limits>
 #include <string>
 
 namespace progression {
 
+    // Model::apply marks a fact that is currently false with this sentinel rather than with
+    // INT_MAX, so it has to be recognised when the node's times are read back in.
+    static const int parallelInf = std::numeric_limits<int>::max() / 4;
+
     hsPrefixMakespanFast::hsPrefixMakespanFast(Model *htn) : m(htn) {
-        isRCFact.assign(m->numStateBits, false);
-        for (int i = 0; i < m->numStateBits; ++i) {
-            const string &name = m->factStrs[i];
-            if (name.rfind("tdr-", 0) == 0 || name.rfind("bur-", 0) == 0)
-                isRCFact[i] = true;
-        }
+        // The RC model holds one "tdr-" fact per action of the original model, so counting them
+        // recovers where its own actions end and its method actions begin.
+        numHtnActions = 0;
+        for (int i = 0; i < m->numStateBits; ++i)
+            if (m->factStrs[i].rfind("tdr-", 0) == 0)
+                ++numHtnActions;
+    }
+
+    // A method action stands for a decomposition and pandaPI's artificial method-precondition
+    // actions are instantaneous; everything else occupies one time step.
+    int hsPrefixMakespanFast::duration(int op) const {
+        if (op >= numHtnActions)
+            return 0;
+        return m->taskNames[op].rfind("__", 0) == 0 ? 0 : 1;
     }
 
     int hsPrefixMakespanFast::getHeuristicValue(bucketSet &s, noDelIntSet &g) {
-        // Working copies — one per call (same pattern as hsPrefixMakespan Phase 2)
         vector<int> factTime(m->numStateBits, INT_MAX);
-        vector<int> taskCompletion(m->numTasks + m->numActions, INT_MAX);
 
-        // Seed fact times directly from the node's incrementally-maintained array.
-        // For HTN facts use nodeFactTimes; for RC bookkeeping facts use 0.
+        // Seed the facts of the original model from the node's incrementally maintained times.
+        // A fact that is not currently true carries the sentinel and has to stay unreachable
+        // rather than become huge-but-finite, or an unreachable goal reads as a vast estimate
+        // and the node is never recognised as a dead end.
         if (nodeFactTimes != nullptr) {
             for (int i = 0; i < numHtnBits && i < m->numStateBits; ++i)
-                factTime[i] = nodeFactTimes[i];
+                factTime[i] = (nodeFactTimes[i] >= parallelInf) ? INT_MAX : nodeFactTimes[i];
         }
-        // RC model facts beyond the HTN range keep INT_MAX (set to 0 below if in state)
 
-        // Override with current state: any fact in s that has INT_MAX gets time 0
-        for (int f = s.getFirst(); f >= 0; f = s.getNext()) {
+        // The RC bookkeeping facts are not tracked there. Those the node's task network provides
+        // hold from time zero.
+        for (int f = s.getFirst(); f >= 0; f = s.getNext())
             if (factTime[f] == INT_MAX)
                 factTime[f] = 0;
-        }
 
         IntPairHeap<int> queue(m->numStateBits * 2);
-
-        // Enqueue non-RC facts that are reachable
-        for (int f = s.getFirst(); f >= 0; f = s.getNext()) {
-            if (!isRCFact[f] && factTime[f] != INT_MAX)
+        for (int f = s.getFirst(); f >= 0; f = s.getNext())
+            if (factTime[f] != INT_MAX)
                 queue.add(factTime[f], f);
-        }
 
         vector<int> unsatPrecs(m->numActions);
         vector<int> layerOp(m->numActions, 0);
         vector<int> zeroPrecActions;
 
+        // Every precondition counts, the bookkeeping ones included. A method action's
+        // preconditions are the bottom-up bits of its subtasks, so waiting for them is what makes
+        // a task complete when its last subtask finishes; a primitive action's top-down bit is
+        // what confines the estimate to the actions this task network can still reach.
         for (int i = 0; i < m->numActions; ++i) {
-            int count = 0;
-            for (int j = 0; j < m->numPrecs[i]; ++j)
-                if (!isRCFact[m->precLists[i][j]]) ++count;
-            unsatPrecs[i] = count;
-            if (count == 0)
+            unsatPrecs[i] = m->numPrecs[i];
+            if (unsatPrecs[i] == 0)
                 zeroPrecActions.push_back(i);
         }
 
-        // Reachability propagation (mirrors hsPrefixMakespan Phase 2)
         while (!queue.isEmpty() || !zeroPrecActions.empty()) {
             int time = 0;
             int f = -1;
 
-            if (!zeroPrecActions.empty()) {
-                // processed below
-            } else {
+            if (zeroPrecActions.empty()) {
                 time = queue.topKey();
                 f = queue.topVal();
                 queue.pop();
@@ -83,49 +90,20 @@ namespace progression {
                 int op = zeroPrecActions.back();
                 zeroPrecActions.pop_back();
 
-                int startTime = layerOp[op];
-                int duration = 1;
-                if (m->taskNames[op].rfind("__", 0) == 0) duration = 0;
-                int finishTime = startTime + duration;
+                int finishTime = layerOp[op] + duration(op);
 
-                if (finishTime < taskCompletion[op])
-                    taskCompletion[op] = finishTime;
-
+                // Effects hold when the action finishes, its bottom-up bit included: a task is
+                // produced from below once its last subtask is done, not once it starts.
                 for (int j = 0; j < m->numAdds[op]; ++j) {
                     int eff = m->addLists[op][j];
-                    int effTime = isRCFact[eff] ? startTime : finishTime;
-                    if (factTime[eff] > effTime) {
-                        factTime[eff] = effTime;
-                        if (!isRCFact[eff])
-                            queue.add(effTime, eff);
+                    if (factTime[eff] > finishTime) {
+                        factTime[eff] = finishTime;
+                        queue.add(finishTime, eff);
                     }
                 }
             }
         }
 
-        // Hierarchical propagation (methods)
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            for (int mIdx = 0; mIdx < m->numMethods; ++mIdx) {
-                int methodEnd = 0;
-                bool possible = true;
-                for (int j = 0; j < m->numSubTasks[mIdx]; ++j) {
-                    int subT = m->subTasks[mIdx][j];
-                    if (taskCompletion[subT] == INT_MAX) { possible = false; break; }
-                    if (taskCompletion[subT] > methodEnd) methodEnd = taskCompletion[subT];
-                }
-                if (possible) {
-                    int parent = m->decomposedTask[mIdx];
-                    if (methodEnd < taskCompletion[parent]) {
-                        taskCompletion[parent] = methodEnd;
-                        changed = true;
-                    }
-                }
-            }
-        }
-
-        // Compute total makespan estimate over goal facts
         int globalMax = 0;
         for (int goalFact = g.getFirst(); goalFact >= 0; goalFact = g.getNext()) {
             if (factTime[goalFact] == INT_MAX) return INT_MAX;
