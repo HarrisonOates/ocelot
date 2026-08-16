@@ -243,6 +243,19 @@ def encode_POP(pop, cmdargs):
                     if ad not in [a1, a2]:
                         clauses.append(Support(a1, p, a2) >> (~Action(ad) | Order(ad, a1) | Order(a2, ad)))
 
+    # POCL permits actions with interfering effects to share a timestep when
+    # those effects do not threaten a causal support link.  Parallel semantics
+    # additionally forbids add/delete interference between the effects of two
+    # scheduled actions.
+    if getattr(cmdargs, 'semantics', 'pocl') == 'parallel':
+        scheduled_actions = [a for a in A if a is not init and a is not goal]
+        for i, a1 in enumerate(scheduled_actions):
+            for a2 in scheduled_actions[i + 1:]:
+                if not ((a1.adds & a2.dels) or (a2.adds & a1.dels)):
+                    continue
+                for t in range(horizon):
+                    clauses.append((~start_vars[(a1, t)]) | (~start_vars[(a2, t)]))
+
 
     if cmdargs.serial:
         for a1 in A:
@@ -309,6 +322,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--allact', dest='allact', action='store_true', help='Include all actions in the plan')
     parser.add_argument('--serial', dest='serial', action='store_true', help='Force it to be serial')
+    parser.add_argument('--semantics', choices=('pocl', 'parallel'), default='pocl',
+                        help='Scheduling semantics: POCL (default) or strict parallel')
     parser.add_argument('--deorder', dest='deorder', action='store_true', help='Force it to be a deordering')
 
     args = parser.parse_args()

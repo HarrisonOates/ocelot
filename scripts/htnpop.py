@@ -210,6 +210,8 @@ if __name__ == '__main__':
     parser.add_argument('domain_file', help="The PDDL domain file.")
     parser.add_argument('problem_file', help="The PDDL problem file.")
     parser.add_argument('-o', '--output', default='output.wcnf', help="Name for the output WCNF file.")
+    parser.add_argument('--semantics', choices=('pocl', 'parallel'), default='pocl',
+                        help='Scheduling semantics: POCL (default) or strict parallel')
     
     args = parser.parse_args()
 
@@ -237,6 +239,7 @@ if __name__ == '__main__':
             deorder=False,
             allact=True,
             serial=False,
+            semantics=args.semantics,
             output=args.output
         )
         

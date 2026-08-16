@@ -144,7 +144,8 @@ def run_search_step(engine: Path, sas: Path, original: Path, log_path: Path,
 
 def run_pipeline(domain: Path, problem: Path, basename: Path,
                  tools: dict, heuristic: str, g_value: str, weight: int,
-                 memory_limit_mb: int = None) -> dict:
+                 memory_limit_mb: int = None,
+                 semantics: str = "pocl") -> dict:
     """
     Run all 7 pipeline steps for one problem.
     Returns dict with nodes, nodes_per_sec, makespan, search_s, total_s.
@@ -162,6 +163,7 @@ def run_pipeline(domain: Path, problem: Path, basename: Path,
     sas        = Path(str(basename) + ".sas")
     orig       = Path(str(basename) + ".original")
     act        = Path(str(basename) + ".actual")
+    layers     = Path(str(basename) + ".layers")
     wcnf       = Path(str(basename) + ".wcnf")
     sol        = Path(str(basename) + ".sol")
     stats_file = Path(str(basename) + ".stats")
@@ -187,7 +189,8 @@ def run_pipeline(domain: Path, problem: Path, basename: Path,
         raise RuntimeError(f"Cleaning failed:\n{r.stderr.strip()}")
 
     r = run_step("Encoding", [sys.executable, scripts_dir / "htnpop.py",
-                               act, domain, problem, "-o", wcnf], log, cwd=scripts_dir,
+                               act, domain, problem, "-o", wcnf,
+                               "--semantics", semantics], log, cwd=scripts_dir,
                  memory_limit_mb=ml)
     if r.returncode != 0:
         raise RuntimeError(f"Encoding failed:\n{r.stderr.strip()}")
@@ -199,7 +202,8 @@ def run_pipeline(domain: Path, problem: Path, basename: Path,
 
     r = run_step("Analysis", [sys.executable, scripts_dir / "analyzer.py",
                                "--map", str(wcnf) + ".map",
-                               "--rc2out", sol, "--show-popstats"],
+                               "--rc2out", sol, "--show-popstats",
+                               "--actual", act, "--layers", layers],
                  log, stdout_file=stats_file, cwd=scripts_dir, memory_limit_mb=ml)
     if r.returncode != 0:
         raise RuntimeError(f"Analysis failed:\n{r.stderr.strip()}")
@@ -246,7 +250,8 @@ def print_summary(results: list):
 
 def run_batch(domain_dir: Path, output_dir: Path,
               tools: dict, heuristic: str, g_value: str, weight: int,
-              memory_limit_mb: int = None):
+              memory_limit_mb: int = None,
+              semantics: str = "pocl"):
     """Discover pfile*.hddl in domain_dir and run the pipeline for each."""
     domain_hddl = domain_dir / "domain.hddl"
     if not domain_hddl.exists():
@@ -267,6 +272,7 @@ def run_batch(domain_dir: Path, output_dir: Path,
         print(f"Running {name}...", flush=True)
         try:
             stats = run_pipeline(domain_hddl, prob, basename, tools, heuristic, g_value, weight,
+                                 semantics=semantics,
                                  memory_limit_mb=memory_limit_mb)
             results.append({"problem": name, **stats})
             print(f"  makespan={stats['makespan']}  nodes={stats['nodes']}  total={stats['total_s']:.2f}s")
@@ -290,6 +296,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="G-value mode passed to -g (default: makespan)")
     p.add_argument("--weight", type=int, default=1,
                    help="A* weight (default: 1)")
+    p.add_argument("--semantics", choices=("pocl", "parallel"), default="pocl",
+                   help="MaxSAT scheduling semantics (default: pocl)")
     p.add_argument("--memory-limit", type=int, default=8192, metavar="MB",
                    help="Per-process virtual memory limit in MB (default: 8192). "
                         "Set to 0 to disable.")
@@ -312,6 +320,7 @@ def main():
         try:
             result = run_pipeline(domain, problem, basename, tools,
                                   ns.heuristic, ns.g_value, ns.weight,
+                                  semantics=ns.semantics,
                                   memory_limit_mb=mem)
             print(f"Done. makespan={result['makespan']}  "
                   f"nodes={result['nodes']}  total={result['total_s']:.2f}s")
@@ -320,4 +329,5 @@ def main():
             sys.exit(1)
     else:
         run_batch(Path(ns.args[0]), Path(ns.args[1]), tools,
-                  ns.heuristic, ns.g_value, ns.weight, memory_limit_mb=mem)
+                  ns.heuristic, ns.g_value, ns.weight, semantics=ns.semantics,
+                  memory_limit_mb=mem)

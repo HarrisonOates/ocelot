@@ -10,6 +10,61 @@ from pop import POP
 import networkx as nx
 
 
+def write_layers(actual_file, starts, layers_file):
+    """Write a complete layered counterpart of .actual.
+
+    Primitive action lines receive their solved start layer; root and
+    decomposition records are copied unchanged, and the format is explicitly
+    terminated with <==.
+    """
+    if not actual_file:
+        raise ValueError('--layers requires --actual')
+    start_by_id = {}
+    for label, timestep in starts.items():
+        marker = ')#'
+        if marker not in label:
+            continue
+        try:
+            action_id = int(label.rsplit(marker, 1)[1])
+        except ValueError:
+            continue
+        start_by_id[action_id] = timestep
+
+    lines = []
+    in_primitive_plan = False
+    in_decomposition = False
+    saw_end = False
+    with open(actual_file) as f:
+        for raw in f:
+            line = raw.rstrip('\n')
+            if line == '==>':
+                in_primitive_plan = True
+                lines.append(line)
+                continue
+            if in_primitive_plan and not in_decomposition:
+                if line.startswith('root'):
+                    in_decomposition = True
+                    lines.append(line)
+                    continue
+                if line.strip():
+                    action_id = int(line.split(None, 1)[0])
+                    if action_id not in start_by_id:
+                        raise ValueError(f'No solved start layer for .actual action {action_id}')
+                    lines.append(f'{line} [{start_by_id[action_id]}]')
+                else:
+                    lines.append(line)
+                continue
+            if line == '<==':
+                saw_end = True
+            lines.append(line)
+
+    if not saw_end:
+        lines.append('<==')
+
+    with open(layers_file, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+
+
 def get_mapping(map_file):
     with open(map_file) as f:
         mapping = json.load(f)
@@ -139,9 +194,12 @@ def calculate_graph_statistics(pop, starts=None):
 
     return stats
 
-def do_popstats(mapping, output, show_linears = False):
+def do_popstats(mapping, output, show_linears = False, actual_file=None, layers_file=None):
 
     pop, optimal, starts = extract_pop(mapping, output)
+
+    if layers_file:
+        write_layers(actual_file, starts, layers_file)
 
     if show_linears:
         print("\nLinearizations: %d\n" % count_linearizations(pop))
@@ -162,6 +220,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--map', help='The mapping file', required=True)
     parser.add_argument('--rc2out', help='The output from RC2', required=True)
+    parser.add_argument('--actual', help='Cleaned .actual plan used for encoding')
+    parser.add_argument('--layers', help='Write solved action layers to this file')
 
     parser.add_argument('--dot', help='Print the POP as a dot file')
     parser.add_argument('--compactdot', help='Print the POP as a compact dot file')
@@ -176,7 +236,8 @@ if __name__ == '__main__':
         print_solution(get_mapping(args.map), args.rc2out)
 
     if args.show_popstats:
-        do_popstats(get_mapping(args.map), args.rc2out, args.count_linearizations)
+        do_popstats(get_mapping(args.map), args.rc2out, args.count_linearizations,
+                    args.actual, args.layers)
 
     if args.dot:
         pop, _, _ = extract_pop(get_mapping(args.map), args.rc2out)
@@ -187,4 +248,3 @@ if __name__ == '__main__':
         pop, _, _ = extract_pop(get_mapping(args.map), args.rc2out)
         with open(args.compactdot, 'w') as f:
             f.write(pop.dot(compact=True))
-
