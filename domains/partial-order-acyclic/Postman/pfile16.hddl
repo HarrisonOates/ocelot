@@ -6,9 +6,9 @@
    (problem pfile16)
    (:domain postman)
    (:objects
-      postman_0, postman_1, postman_2, postman_3, postman_4, postman_5, postman_6, postman_7, postman_8, postman_9, postman_10 - postman
-      mail_0, mail_1, mail_2, mail_3, mail_4, mail_5 - mail
-      loc_0, loc_1 - location
+      postman_0 postman_1 postman_2 postman_3 postman_4 postman_5 postman_6 postman_7 postman_8 postman_9 postman_10 - postman
+      mail_0 mail_1 mail_2 mail_3 mail_4 mail_5 - mail
+      loc_0 loc_1 - location
    )
 
    (:htn

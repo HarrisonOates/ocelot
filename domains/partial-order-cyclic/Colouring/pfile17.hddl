@@ -1,5 +1,5 @@
 (define (problem tiling-17)
-  (:domain game)
+  (:domain tiling)
   (:objects
     n0 n1 n2 n3 - number
  c0 c1 c2 IGN - colour

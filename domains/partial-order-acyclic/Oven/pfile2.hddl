@@ -4,7 +4,7 @@
 
 (define
    (problem pfile2)
-   (:domain postman)
+   (:domain oven)
    (:objects
       oven_0 oven_1 oven_2 - oven
       brick_0 brick_1 brick_2 brick_3 - brick

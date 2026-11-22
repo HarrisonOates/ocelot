@@ -6,9 +6,9 @@
    (problem pfile13)
    (:domain postman)
    (:objects
-      postman_0, postman_1 - postman
-      mail_0, mail_1, mail_2, mail_3, mail_4, mail_5, mail_6, mail_7, mail_8, mail_9, mail_10, mail_11, mail_12, mail_13 - mail
-      loc_0, loc_1 - location
+      postman_0 postman_1 - postman
+      mail_0 mail_1 mail_2 mail_3 mail_4 mail_5 mail_6 mail_7 mail_8 mail_9 mail_10 mail_11 mail_12 mail_13 - mail
+      loc_0 loc_1 - location
    )
 
    (:htn

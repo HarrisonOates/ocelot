@@ -10,6 +10,7 @@
 
 	(:types
 		nurse doctor - agent
+		agent
 		toolset
 		patient
 	)

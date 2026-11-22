@@ -3,6 +3,7 @@
 	(:types
 		calib_direction - direction
 		image_direction - direction
+		direction
 		instrument
 		satellite
 		mode

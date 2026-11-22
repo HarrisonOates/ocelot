@@ -1,4 +1,4 @@
-(define (domain barman_agent)
+(define (domain barman_htn)
 (:requirements :negative-preconditions
 	:hierarchy
 	:typing
@@ -8,6 +8,7 @@
 
 (:types 
 	container dispenser level beverage hand - anything
+	anything - object
 	shot shaker - container
 	ingredient cocktail - beverage
 )
