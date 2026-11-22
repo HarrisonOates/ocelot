@@ -10,6 +10,8 @@
 #include <stack>
 #include <list>
 #include <bitset>
+#include <functional>
+#include <unordered_set>
 #include "../intDataStructures/IntPairHeap.h"
 #include "../intDataStructures/CompressedSequenceSet.h"
 
@@ -144,6 +146,139 @@ int VisitedList::routeCost(searchNode *n) const {
 	return 0;
 }
 
+int releaseOf(searchNode *n, planStep *ps) {
+	if (!n->taskEarliestStart) return 0;
+	auto it = n->taskEarliestStart->find(ps->id);
+	return it == n->taskEarliestStart->end() ? 0 : it->second;
+}
+
+// Optional extra condition every (one, other) pair of an isomorphism must meet.
+static const std::function<bool(planStep *, planStep *)> *matchingPairCondition = nullptr;
+bool matching(searchNode *one, searchNode *other);
+
+// Try to find an isomorphism whose every pair satisfies `cond`.
+static bool constrainedMatching(searchNode *one, searchNode *other,
+                                const std::function<bool(planStep *, planStep *)> &cond) {
+	matchingPairCondition = &cond;
+	bool result = matching(one, other);
+	matchingPairCondition = nullptr;
+	return result;
+}
+
+// Model::apply starts an action at the max of its HTN release, the
+// availability of its preconditions, factLatestDeleted of the facts it adds,
+// and factLastNeeded of the facts it deletes, and only ever raises the latter
+// two. Every finish time is monotone in these components, so a node that is
+// no later in all of them reaches each continuation of the other node at no
+// greater makespan. (Availability times are omitted; see TimingSignature.)
+bool TimingSignature::dominates(const TimingSignature &other) const {
+	if (makespan > other.makespan) return false;
+	for (size_t i = 0; i < latestDeleted.size(); i++)
+		if (latestDeleted[i] > other.latestDeleted[i]) return false;
+	for (size_t i = 0; i < lastNeeded.size(); i++)
+		if (lastNeeded[i] > other.lastNeeded[i]) return false;
+	if (releases.size() != other.releases.size()) return false; // networks differ
+	for (size_t i = 0; i < releases.size(); i++)
+		if (releases[i] > other.releases[i]) return false;
+	if (releasesByLabel.size() != other.releasesByLabel.size()) return false;
+	for (auto &[label, mine] : releasesByLabel) {
+		auto it = other.releasesByLabel.find(label);
+		if (it == other.releasesByLabel.end() || it->second.size() != mine.size()) return false;
+		for (size_t i = 0; i < mine.size(); i++)
+			if (mine[i] > it->second[i]) return false;
+	}
+	return true;
+}
+
+TimingSignature VisitedList::timingSignature(searchNode *n) const {
+	const int bits = htn->numStateBits;
+	TimingSignature sig;
+	sig.makespan = n->planMakespan;
+	sig.latestDeleted.assign(bits, 0);
+	sig.lastNeeded.assign(bits, 0);
+	if (n->factLatestDeleted) std::copy(n->factLatestDeleted, n->factLatestDeleted + bits, sig.latestDeleted.begin());
+	if (n->factLastNeeded) std::copy(n->factLastNeeded, n->factLastNeeded + bits, sig.lastNeeded.begin());
+
+	// A component only matters if an action still reachable from the task
+	// network reads it in Model::apply: latestDeleted by an adder, lastNeeded by
+	// a deleter (both only for facts some action requires). Neutralise the rest;
+	// equivalent networks reach the same actions, so both sides are masked alike.
+	vector<char> readsDeleted(bits, 0), readsNeeded(bits, 0);
+	bool reachabilityKnown = true;
+	auto markReachable = [&](planStep *ps) {
+		if (ps->reachableT == nullptr) { reachabilityKnown = false; return; }
+		for (int k = 0; k < ps->numReachableT; k++) {
+			int a = ps->reachableT[k];
+			if (a >= htn->numActions) continue;
+			for (int j = 0; j < htn->numAdds[a]; j++)
+				if (htn->precToActionSize[htn->addLists[a][j]] > 0) readsDeleted[htn->addLists[a][j]] = 1;
+			for (int j = 0; j < htn->numDels[a]; j++)
+				if (htn->precToActionSize[htn->delLists[a][j]] > 0) readsNeeded[htn->delLists[a][j]] = 1;
+		}
+	};
+	for (int i = 0; i < n->numAbstract; i++) markReachable(n->unconstraintAbstract[i]);
+	for (int i = 0; i < n->numPrimitive; i++) markReachable(n->unconstraintPrimitive[i]);
+	if (reachabilityKnown) {
+		for (int i = 0; i < bits; i++) {
+			if (!readsDeleted[i]) sig.latestDeleted[i] = 0;
+			if (!readsNeeded[i]) sig.lastNeeded[i] = 0;
+		}
+	}
+
+	// HTN release times. In GI mode they are compared per occurrence during the
+	// isomorphism search (see insertVisi); the hash modes compare them
+	// positionally along a canonical order of the network.
+	if (useTotalOrderMode || useSequencesMode || !GIcheck) {
+		// chains starting at the unconstrained steps (one chain per step when the
+		// network is not made of sequences); identical task chains are
+		// interchangeable, so sorting by (task, release) yields a valid pairing
+		vector<vector<pair<int, int>>> chains;
+		auto addChain = [&](planStep *ps) {
+			vector<pair<int, int>> chain;
+			while (ps) {
+				chain.push_back({ps->task, releaseOf(n, ps)});
+				ps = (useTotalOrderMode || useSequencesMode) && ps->numSuccessors == 1 ? ps->successorList[0] : nullptr;
+			}
+			chains.push_back(chain);
+		};
+		if (useTotalOrderMode || useSequencesMode) {
+			for (int i = 0; i < n->numAbstract; i++) addChain(n->unconstraintAbstract[i]);
+			for (int i = 0; i < n->numPrimitive; i++) addChain(n->unconstraintPrimitive[i]);
+		} else {
+			// partial order without GI check: the visited list already equates
+			// networks by hash only; pair occurrences by (task, release) order
+			unordered_set<planStep *> seen;
+			vector<planStep *> todo;
+			for (int i = 0; i < n->numAbstract; i++) todo.push_back(n->unconstraintAbstract[i]);
+			for (int i = 0; i < n->numPrimitive; i++) todo.push_back(n->unconstraintPrimitive[i]);
+			while (!todo.empty()) {
+				planStep *ps = todo.back();
+				todo.pop_back();
+				if (!seen.insert(ps).second) continue;
+				chains.push_back({{ps->task, releaseOf(n, ps)}});
+				for (int k = 0; k < ps->numSuccessors; k++) todo.push_back(ps->successorList[k]);
+			}
+		}
+		sort(chains.begin(), chains.end());
+		for (auto &chain : chains)
+			for (auto &[task, release] : chain) sig.releases.push_back(release);
+	} else {
+		unordered_set<planStep *> seen;
+		vector<planStep *> todo;
+		for (int i = 0; i < n->numAbstract; i++) todo.push_back(n->unconstraintAbstract[i]);
+		for (int i = 0; i < n->numPrimitive; i++) todo.push_back(n->unconstraintPrimitive[i]);
+		while (!todo.empty()) {
+			planStep *ps = todo.back();
+			todo.pop_back();
+			if (!seen.insert(ps).second) continue;
+			sig.releasesByLabel[ps->task].push_back(releaseOf(n, ps));
+			for (int k = 0; k < ps->numSuccessors; k++) todo.push_back(ps->successorList[k]);
+		}
+		for (auto &[label, r] : sig.releasesByLabel) sort(r.begin(), r.end());
+	}
+	return sig;
+}
+
 
 
 void dfsdfs(planStep *s, int depth, set<planStep *> &psp, set<pair<int, int>> &orderpairs,
@@ -202,6 +337,7 @@ bool matchingGenerate(
         
 		if (mapping.count(psOne) && mapping[psOne] != psOther) continue;
         if (backmapping.count(psOther) && backmapping[psOther] != psOne) continue;
+        if (matchingPairCondition && !(*matchingPairCondition)(psOne, psOther)) continue;
 		DEBUG(cout << "\tOK" << endl);
 
         bool subRes = true;
@@ -550,7 +686,21 @@ bool VisitedList::insertVisi(searchNode *n) {
 		// check if node was new
 		bool returnValue = *payload == nullptr;
 
-		if (noReopening){
+		if (timingDominance()) {
+			// keep the Pareto set of non-dominated timing signatures for this key
+			vector<TimingSignature> ** front = (vector<TimingSignature> **) payload;
+			if (*front == nullptr) *front = new vector<TimingSignature>;
+			TimingSignature sig = timingSignature(n);
+			returnValue = true;
+			for (const TimingSignature &other : **front)
+				if (other.dominates(sig)) { returnValue = false; break; }
+			if (returnValue) {
+				auto &v = **front;
+				v.erase(std::remove_if(v.begin(), v.end(),
+					[&](const TimingSignature &other) { return sig.dominates(other); }), v.end());
+				v.push_back(std::move(sig));
+			}
+		} else if (noReopening){
 			*payload = (void*) 1; // know the hash is known
 		} else {
 			int costOfInsertedNode = routeCost(n) + 1; // add 1 to distinguish g=0 from no search node at all.
@@ -569,6 +719,41 @@ bool VisitedList::insertVisi(searchNode *n) {
 	
 		return returnValue;
 	} else {
+		if (timingDominance()) {
+			// stored nodes keep their timing signature so it is computed once
+			typedef vector<pair<searchNode *, TimingSignature>> Front;
+			Front ** front = (Front **) payload;
+			if (*front == nullptr) *front = new Front;
+			TimingSignature sig = timingSignature(n);
+			vector<searchNode *> toRemove;
+			for (auto &[other, otherSig] : **front) {
+				// componentwise on the facts, per matched occurrence on releases
+				if (otherSig.dominates(sig)) {
+					std::function<bool(planStep *, planStep *)> cond =
+						[&, o = other](planStep *mine, planStep *theirs) { return releaseOf(o, theirs) <= releaseOf(n, mine); };
+					if (constrainedMatching(n, other, cond)) {
+						std::clock_t after = std::clock();
+						this->time += 1000.0 * (after - before) / CLOCKS_PER_SEC;
+						return false;
+					}
+				}
+				if (sig.dominates(otherSig)) {
+					std::function<bool(planStep *, planStep *)> cond =
+						[&, o = other](planStep *mine, planStep *theirs) { return releaseOf(n, mine) <= releaseOf(o, theirs); };
+					if (constrainedMatching(n, other, cond)) toRemove.push_back(other);
+				}
+				// equivalent networks with incomparable timings are both kept
+			}
+			auto &v = **front;
+			v.erase(std::remove_if(v.begin(), v.end(), [&](const pair<searchNode *, TimingSignature> &e) {
+				return std::find(toRemove.begin(), toRemove.end(), e.first) != toRemove.end(); }), v.end());
+			v.push_back({n, std::move(sig)});
+			std::clock_t after = std::clock();
+			this->time += 1000.0 * (after - before) / CLOCKS_PER_SEC;
+			uniqueInsertions++;
+			return true;
+		}
+
 		vector<searchNode*> ** nodes = (vector<searchNode*> **) payload;
 		if (*nodes == nullptr)
 			*nodes = new vector<searchNode*>;

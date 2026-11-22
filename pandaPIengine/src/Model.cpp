@@ -1252,15 +1252,18 @@ newlyReachedMLMs = new noDelIntSet();
 	for (int i = 0; i < numAdds[progressed->task]; i++) {
 		int fact = addLists[progressed->task][i];
 		result->state[fact] = true;
-		// Set when this fact becomes available for causal ordering
-		// Effects are available at the same time the action finishes
+		// Preserve the earliest support while a fact remains continuously true.
+		// A redundant add must not delay later readers to this action's finish.
+		// Use the successor value: the delete loop above resets it to infinity,
+		// so a delete/re-add starts a new truth interval at this finish time.
+		int available = std::min(result->factEarliestTrue[fact], finish);
 		if (enableMakespanTrace && n->factEarliestTrue && n->factEarliestTrue[fact] != parallelInf) {
 			std::cerr << "[makespan-add] " << taskNames[progressed->task]
-			          << " adds " << factStrs[fact] 
+			          << " adds " << factStrs[fact]
 			          << " (was available at " << n->factEarliestTrue[fact]
-			          << ", now at " << finish << ")" << std::endl;
+			          << ", now at " << available << ")" << std::endl;
 		}
-		result->factEarliestTrue[fact] = finish;
+		result->factEarliestTrue[fact] = available;
 	}	result->planMakespan = std::max(n->planMakespan, finish);
 	
 	// Copy HTN ordering constraints from parent
