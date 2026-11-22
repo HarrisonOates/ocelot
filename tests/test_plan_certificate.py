@@ -111,34 +111,58 @@ CLEANERS_DOMAIN_MAKESPAN = CLEANERS_DOMAIN.replace(
     "(:requirements :typing", "(:requirements :makespan :typing")
 CLEANERS_PROBLEM_MAKESPAN = CLEANERS_PROBLEM.rstrip()[:-1] + "\n  (:metric minimize (makespan)))\n"
 
-# The prepare task sets `ready` and then preps; `use` must come after prepare
-# and its method requires `ready`; `spoil` (unordered) clears it. No ACTION
-# needs `ready`, so the MaxSAT reorderer (which does not model method
-# preconditions) may leave clear-ready unordered, which permits a
-# linearization where m-use's guard can never be placed.
+# Method-precondition guards. m-use requires `ready` and no ACTION does, so
+# only a modelled guard protects it; clear-ready (in an unordered spoil task)
+# destroys it. Each problem is forced (one method per task).
 GUARD_DOMAIN = """
 (define (domain guard)
   (:requirements :hierarchy :method-preconditions)
-  (:predicates (ready) (prepped) (worked) (spoiled))
+  (:predicates (ready) (prepped) (worked) (spoiled) (a1) (a2))
   (:task prepare :parameters ())
+  (:task prepare-fast :parameters ())
   (:task use :parameters ())
   (:task spoil :parameters ())
+  (:task spoil-long :parameters ())
   (:method m-prepare :parameters () :task (prepare)
     :ordered-subtasks (and (set-ready) (prep)))
+  (:method m-prepare-fast :parameters () :task (prepare-fast)
+    :ordered-subtasks (set-ready))
   (:method m-use :parameters () :task (use) :precondition (ready)
     :subtasks (work))
   (:method m-spoil :parameters () :task (spoil) :subtasks (clear-ready))
+  (:method m-spoil-long :parameters () :task (spoil-long)
+    :ordered-subtasks (and (clear-ready) (x1) (x2)))
   (:action set-ready :parameters () :precondition () :effect (ready))
   (:action prep :parameters () :precondition () :effect (prepped))
   (:action work :parameters () :precondition () :effect (worked))
   (:action clear-ready :parameters () :precondition ()
-    :effect (and (not (ready)) (spoiled))))
+    :effect (and (not (ready)) (spoiled)))
+  (:action x1 :parameters () :precondition () :effect (a1))
+  (:action x2 :parameters () :precondition () :effect (a2)))
 """
-GUARD_PROBLEM = """
+
+
+def guard_problem(prepare, spoil):
+    return f"""
 (define (problem p) (:domain guard)
-  (:htn :subtasks (and (t1 (prepare)) (t2 (use)) (t3 (spoil))) :ordering (and (< t1 t2)))
+  (:htn :subtasks (and (t1 ({prepare})) (t2 (use)) (t3 ({spoil}))) :ordering (and (< t1 t2)))
   (:init))
 """
+
+
+GUARD_CASES = [
+    # set-ready, prep | guard, work. clear-ready must follow the guard (it may
+    # share work's layer) or precede set-ready: optimum 3, as without the guard,
+    # but the old encoder left clear-ready unordered (Bell: o1 -> o5 -> o2 -> o4).
+    ("protected", "prepare", "spoil", 3),
+    # As above, but clear-ready heads a 3-step chain: after the guard it ends at
+    # 5, before set-ready it pushes use to 4. The guard raises the optimum
+    # from 3 (unprotected) to 4.
+    ("guard-raises-makespan", "prepare", "spoil-long", 4),
+    # set-ready in layer 0, guard and work in layer 1 with clear-ready sharing
+    # layer 1: the zero-duration guard adds no step (3 if it took one).
+    ("guard-adds-no-step", "prepare-fast", "spoil", 2),
+]
 
 
 def _write(tmp_path, domain_text, problem_text):
@@ -236,19 +260,14 @@ def test_rover_benchmark_certificate(tmp_path, semantics):
 @pytest.mark.e2e
 @needs_binaries
 @needs_bell
-def test_unprotected_method_precondition_is_never_silently_accepted(tmp_path):
-    """Either the certificate is Bell-valid, or the pipeline fails loudly with
-    Bell's diagnostics. (The current reorderer does not protect method
-    preconditions, so today this fails with `method_precondition`.)"""
-    domain, problem = _write(tmp_path, GUARD_DOMAIN, GUARD_PROBLEM)
-    try:
-        result = _run(domain, problem, tmp_path / "out")
-    except RuntimeError as e:
-        assert "Bell rejected the plan certificate" in str(e)
-        assert "method_precondition" in str(e)
-        assert json.loads((tmp_path / "out.bell.json").read_text())["status"] == "invalid_plan"
-    else:
-        _assert_certified(result, domain, problem)
+@pytest.mark.parametrize("semantics", ["pocl", "parallel"])
+@pytest.mark.parametrize("name,prepare,spoil,expected", GUARD_CASES,
+                         ids=[c[0] for c in GUARD_CASES])
+def test_method_precondition_guards(tmp_path, name, prepare, spoil, expected, semantics):
+    domain, problem = _write(tmp_path, GUARD_DOMAIN, guard_problem(prepare, spoil))
+    result = _run(domain, problem, tmp_path / "out", semantics)
+    _assert_certified(result, domain, problem)
+    assert result["makespan"] == expected
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +329,7 @@ def test_inherited_ordering_is_added_even_if_solver_omitted_it():
 
 def test_inherited_ordering_contradicting_layers_fails_loudly():
     map_text, sol = _solution({1: 0, 2: 0})
-    with pytest.raises(cert_mod.CertificateError, match="inherited from the decomposition"):
+    with pytest.raises(cert_mod.CertificateError, match="required by the decomposition"):
         cert_mod.build_certificate(UNIT_DOMAIN, UNIT_PROBLEM, UNIT_ACTUAL, map_text, sol,
                                    makespan=1)
 

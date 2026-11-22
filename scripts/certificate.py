@@ -22,33 +22,45 @@ declared subtasks are matched (by backtracking unification, independent of the
 order the children are printed in) against the children, and any method
 parameter still unbound after that (one that appears only in the method's
 precondition) is chosen by enumerating typed objects until the precondition
-holds in some state of the method's legal window in a reference linearization
-of the reordered plan. Compiled pandaPI artefacts (``__method_precondition_*``,
-``__noop*``, ``__top*`` ...) are dropped; they never appear as actions.
+holds in some state of the method's legal window in the engine's own
+sequential execution (``.actual`` lists primitives in execution order).
+Compiled pandaPI artefacts (``__method_precondition_*``, ``__noop*``,
+``__top*`` ...) are dropped; they never appear as actions.
+
+Method-precondition guards
+--------------------------
+``Decomposition`` is shared with the reorderer (htnpop.py), which builds it
+before solving from the same inputs. Each applied method whose ground
+precondition has a non-static literal gets a guard: a zero-duration step that
+consumes those literals (so the encoding gives it unthreatened causal support),
+follows everything the hierarchy orders before the method's task and the checks
+of its ancestors and earlier tasks, and precedes everything in the task's
+subtree. Guards that are provably redundant are pruned (see
+``Decomposition._prune_guards``). Guards are never emitted.
 
 Partial order
 -------------
-The submitted order is the union of
+The order is built over actions and guards as the union of
 
-1. the ``Order`` relation the MaxSAT reorderer chose between real actions
-   (it is transitively closed by the encoding and contains every causal link
+1. the ``Order`` relation the MaxSAT reorderer chose (it is transitively
+   closed by the encoding and contains every causal link
    ``Support(a, p, b) -> Order(a, b)`` and every threat resolution
-   ``Order(d, a) | Order(b, d)``),
-2. every primitive ordering inherited through the decomposition (recomputed
-   here from the source methods, including orderings that pass through empty
-   methods), and
+   ``Order(d, a) | Order(b, d)``, for guards as for actions),
+2. every ordering the decomposition imposes (recomputed here from the source
+   methods, including orderings that pass through empty methods), and
 3. for ``--semantics parallel`` only, an edge between every pair of actions
    with interfering effects, oriented by their solved start layers,
 
-transitively reduced. Every edge is checked to go from a strictly earlier to a
-strictly later solved start layer, so the union is acyclic and is a
-restriction (a subset of the linearizations) of the POCL order 1, every one of
-whose linearizations executes under the encoding's action model because each
-precondition has an unthreatened supporter ordered before it. With an optimal
-MaxSAT solution its longest chain is exactly the reported makespan: no edge can
-make it longer than the layer count, and an as-soon-as-possible schedule of the
-same relation is itself a feasible MaxSAT assignment, so it cannot be shorter.
-Both properties are asserted, not assumed.
+then projected onto real actions (keeping orderings through a guard) and
+transitively reduced. Every edge is checked against the solved layers: an
+action precedes only steps in strictly later layers, a guard only steps in the
+same or later layers. So the union is acyclic, and it is a restriction of the
+POCL order 1, every one of whose linearizations executes under the encoding's
+action model, with each guard placed right after its last predecessor. With an
+optimal MaxSAT solution the projection's longest chain is exactly the reported
+makespan: no edge can make it longer than the layer count, and an
+as-soon-as-possible schedule of the same relation is itself a feasible MaxSAT
+assignment, so it cannot be shorter. Both properties are asserted, not assumed.
 """
 
 import argparse
@@ -342,6 +354,79 @@ class Model:
         else:
             adds.add(tuple([head] + [self.term(a, binding) for a in expr[1:]]))
 
+    @property
+    def static_predicates(self):
+        """Predicates no action effect mentions: their truth never changes."""
+        if not hasattr(self, '_static'):
+            changed = set()
+
+            def scan(e):
+                if not isinstance(e, list) or not e:
+                    return
+                if e[0] in ('and',):
+                    for x in e[1:]:
+                        scan(x)
+                elif e[0] == 'not':
+                    scan(e[1])
+                elif e[0] == 'when':
+                    scan(e[2])
+                elif e[0] == 'forall':
+                    scan(e[2])
+                elif e[0] not in ('increase', 'decrease', 'assign', 'scale-up', 'scale-down'):
+                    changed.add(e[0])
+            for a in self.actions.values():
+                scan(a.effect)
+            self._static = changed
+        return lambda pred: pred not in self._static
+
+    def entailing_literals(self, expr, binding, state, positive=True):
+        """Ground literals, all true in `state`, that together entail `expr`
+        (which must hold in `state`). Returns a set of (positive, atom).
+
+        Disjunctions/existentials contribute the first disjunct true in
+        `state`, so the result is a sufficient conjunctive condition: if every
+        returned literal holds at the method's check point, so does `expr`.
+        """
+        if not expr:
+            return set()
+        head = expr[0]
+        if head == 'not':
+            return self.entailing_literals(expr[1], binding, state, not positive)
+        if head == 'imply':
+            return self.entailing_literals(['or', ['not', expr[1]], expr[2]],
+                                           binding, state, positive)
+        if head in ('and', 'or'):
+            conj = (head == 'and') == positive
+            parts = [self._signed(e, positive) for e in expr[1:]]
+            if conj:
+                return set().union(*[self.entailing_literals(e, binding, state, True)
+                                     for e in parts]) if parts else set()
+            for e in parts:
+                if self.holds(e, binding, state):
+                    return self.entailing_literals(e, binding, state, True)
+            raise CertificateError(f'condition {expr} does not hold')
+        if head in ('forall', 'exists'):
+            vars_ = typed_list(expr[1])
+            insts = [{**binding, **dict(zip((v for v, _ in vars_), c))}
+                     for c in itertools.product(*[self.objects_of(t) for _, t in vars_])]
+            conj = (head == 'forall') == positive
+            body = self._signed(expr[2], positive)
+            if conj:
+                return set().union(*[self.entailing_literals(body, b, state, True)
+                                     for b in insts]) if insts else set()
+            for b in insts:
+                if self.holds(body, b, state):
+                    return self.entailing_literals(body, b, state, True)
+            raise CertificateError(f'condition {expr} does not hold')
+        if head == '=':
+            return set()  # static: fixed by the binding
+        atom = tuple([head] + [self.term(a, binding) for a in expr[1:]])
+        return {(positive, atom)}
+
+    @staticmethod
+    def _signed(e, positive):
+        return e if positive else ['not', e]
+
     def apply(self, action, args, state):
         schema = self.actions[action]
         binding = dict(zip((v for v, _ in schema.params), args))
@@ -395,7 +480,8 @@ _ID_RE = re.compile(r'#([^#\s]+)$')
 
 
 def parse_maxsat_solution(map_text, sol_text):
-    """Return (orders {(id,id)}, starts {id: t}, optimal) for real plan actions."""
+    """Return (orders {(id,id)}, starts {id: t}, optimal) for plan actions
+    (integer ids) and method-precondition guards (ids `g<task id>`)."""
     mapping = json.loads(map_text)
     lines = sol_text.splitlines()
     vlines = [x for x in lines if x.startswith('v ')]
@@ -423,7 +509,7 @@ def parse_maxsat_solution(map_text, sol_text):
         elif ' -> ' in label:
             a, b = label.split(' -> ')
             orders.add((ident(a), ident(b)))
-    real = lambda x: isinstance(x, int)
+    real = lambda x: isinstance(x, int) or is_guard_id(x)  # actions and guards
     starts = {a: t for a, t in starts.items() if real(a)}
     orders = {(a, b) for a, b in orders if real(a) and real(b)}
     return orders, starts, optimal
@@ -482,13 +568,44 @@ def transitive_closure(pairs):
     return set(nx.transitive_closure_dag(g).edges()) if g.number_of_edges() else set()
 
 
-class Certificate:
-    def __init__(self, model, domain_text, actual_text, orders, starts, makespan,
-                 semantics='pocl'):
+def guard_id(tid):
+    return f'g{tid}'
+
+
+def is_guard_id(x):
+    return isinstance(x, str) and x.startswith('g') and x[1:].isdigit()
+
+
+class Guard:
+    """An applied method's precondition check, as an internal zero-duration
+    step of the reordered plan. `literals` is a set of (positive, atom) whose
+    conjunction entails the ground precondition; static literals are omitted."""
+
+    def __init__(self, tid, method, args, literals, position):
+        self.id = guard_id(tid)
+        self.tid = tid
+        self.method = method
+        self.args = args
+        self.literals = literals
+        self.position = position  # state index in the engine's sequence
+
+    def __repr__(self):
+        return f'Guard({self.id}, {self.method} {" ".join(self.args)})'
+
+
+class Decomposition:
+    """The chosen decomposition of a cleaned PANDA plan, in source-model terms.
+
+    Method bindings (including precondition-only parameters) and method
+    precondition guards are computed over the engine's own sequential
+    execution: `.actual` lists primitives in execution order (the engine
+    prepends each step while walking its solution back from the goal). Both the
+    reorderer (htnpop.py, before solving) and the certificate writer (after)
+    build this object from the same inputs, so they agree on every binding.
+    """
+
+    def __init__(self, model, actual_text):
         self.model = model
-        self.domain_text, self.actual_text = domain_text, actual_text
-        self.semantics = semantics
-        self.makespan = makespan
         prims, roots, decomps = parse_actual(actual_text)
 
         # Drop compiled artefacts. A real primitive must be a source action.
@@ -513,14 +630,7 @@ class Certificate:
             self.decomps[tid] = (task, args, method, kept)
         self.roots = [r for r in roots if r in self.prims or r in self.decomps]
 
-        missing = set(self.prims) - set(starts)
-        if missing:
-            raise CertificateError(f'no solved start layer for plan actions {sorted(missing)}')
-        self.starts = {p: starts[p] for p in self.prims}
-        # Reference linearization: by solved layer. Every submitted ordering
-        # edge goes to a strictly later layer, so this is one of the
-        # certificate's linearizations.
-        self.sequence = sorted(self.prims, key=lambda p: (self.starts[p], p))
+        self.sequence = list(self.prims)  # engine execution order
         self.position = {p: i for i, p in enumerate(self.sequence)}
         self.states = [frozenset(model.init)]
         for p in self.sequence:
@@ -528,9 +638,7 @@ class Certificate:
             self.states.append(frozenset(model.apply(name, args, self.states[-1])))
 
         self._build_hierarchy()
-        self.order = self._build_order(orders)
-
-    # -- hierarchy -----------------------------------------------------------
+        self._build_guards()
 
     def call(self, oid):
         if oid in self.prims:
@@ -540,7 +648,6 @@ class Certificate:
 
     def _build_hierarchy(self):
         m = self.model
-        self.method_args = {}
         self.children = {}          # oid -> child oids in source declaration order
         self.sibling_order = {}     # oid -> [(child, child)] (transitively closed)
 
@@ -599,85 +706,266 @@ class Certificate:
         for o in list(self.prims) + list(self.decomps):
             leaves(o)
         self.preds, self.succs = {}, {}
+        self.parent = {}
         self.inherited = set()
+        self.traversal = []         # pre-order, each sibling list in a linear extension
         reached = set()
 
-        def visit(kids, order, preds, succs):
-            for k in kids:
+        def visit(kids, order, preds, succs, parent):
+            topo = list(nx.lexicographical_topological_sort(
+                nx.DiGraph(order) if order else nx.DiGraph(),
+                key=kids.index)) if order else []
+            ranked = topo + [k for k in kids if k not in topo]
+            for k in ranked:
                 if k in reached:
                     raise CertificateError(f'occurrence {k} is introduced twice')
                 reached.add(k)
+                self.parent[k] = parent
+                self.traversal.append(k)
                 kp = set(preds).union(*[leaves(a) for a, b in order if b == k])
                 ks = set(succs).union(*[leaves(b) for a, b in order if a == k])
                 self.preds[k], self.succs[k] = kp, ks
                 if k in self.decomps:
-                    visit(self.children[k], self.sibling_order[k], kp, ks)
+                    visit(self.children[k], self.sibling_order[k], kp, ks, k)
             for a, b in order:
                 self.inherited.update(itertools.product(leaves(a), leaves(b)))
 
-        visit(self.root_children, self.root_order, set(), set())
+        visit(self.root_children, self.root_order, set(), set(), None)
         orphans = (set(self.prims) | set(self.decomps)) - reached
         if orphans and self.model.htn_subtasks is not None:
             raise CertificateError(f'occurrences not reachable from the root: {sorted(orphans)}')
 
-        for tid in self.decomps:
-            self.method_args[tid] = self._bind_method(tid)
+    def _sibling_predecessors(self, oid):
+        """Occurrences ordered before oid or before one of its ancestors."""
+        out = set()
+        while oid is not None:
+            parent = self.parent.get(oid)
+            order = self.root_order if parent is None else self.sibling_order[parent]
+            out.update(a for a, b in order if b == oid)
+            oid = parent
+        return out
 
-    def _bind_method(self, tid):
+    def _sibling_successors(self, oid):
+        """Occurrences ordered after oid or after one of its ancestors."""
+        out = set()
+        while oid is not None:
+            parent = self.parent.get(oid)
+            order = self.root_order if parent is None else self.sibling_order[parent]
+            out.update(b for a, b in order if a == oid)
+            oid = parent
+        return out
+
+    def _build_guards(self):
+        """Bind every method and create a guard for each method application
+        whose precondition has a non-static literal."""
         m = self.model
-        task, args, mname, kids = self.decomps[tid]
-        meth = m.methods[mname]
-        b = self.pending_bindings[tid]
-        unbound = [(v, t) for v, t in meth.params if v not in b]
-
-        # Legal window in the reference linearization: after every primitive
-        # the hierarchy orders before this task, before its own first
-        # primitive and before every primitive ordered after it.
+        static = m.static_predicates
+        self.method_args = {}
+        self.guards = {}            # tid -> Guard
         n = len(self.sequence)
-        lo = max((self.position[p] + 1 for p in self.preds[tid]), default=0)
-        hi = min((self.position[p] for p in self.leaves[tid] | self.succs[tid]), default=n)
-        windows = [self.states[lo:hi + 1]] if lo <= hi else []
-        windows.append(self.states)  # fallback: anywhere; Bell has the final word
+        for tid in [o for o in self.traversal if o in self.decomps]:
+            task, args, mname, _ = self.decomps[tid]
+            meth = m.methods[mname]
+            b = self.pending_bindings[tid]
+            unbound = [(v, t) for v, t in meth.params if v not in b]
+            names = [v for v, _ in unbound]
 
-        if not unbound:
-            return [b[v] for v, _ in meth.params]
-        names = [v for v, _ in unbound]
-        for states in windows:
-            combos = itertools.product(*[m.objects_of(t) for _, t in unbound])
-            for c in itertools.islice(combos, MAX_BINDING_CANDIDATES):
-                nb = {**b, **dict(zip(names, c))}
-                if any(m.holds(meth.precondition, nb, s) for s in states):
-                    return [nb[v] for v, _ in meth.params]
-        raise CertificateError(
-            f'no binding of {[v for v, _ in unbound]} satisfies the precondition of '
-            f'{mname} for occurrence {tid} ({task} {" ".join(args)})')
+            # Legal window of the check in the engine's sequence: after every
+            # primitive the hierarchy orders before the task, after the guards
+            # of its ancestors and of tasks ordered before it (or an
+            # ancestor), and before its own and its successors' primitives.
+            earlier_guards = set()
+            anc = self.parent.get(tid)
+            while anc is not None:
+                earlier_guards.add(anc)
+                anc = self.parent.get(anc)
+            for o in self._sibling_predecessors(tid):
+                earlier_guards.update(x for x in self.decomps if self._descends(x, o))
+            lo = max([self.position[p] + 1 for p in self.preds[tid]]
+                     + [self.guards[g].position for g in earlier_guards if g in self.guards]
+                     + [0])
+            hi = min((self.position[p] for p in self.leaves[tid] | self.succs[tid]), default=n)
+
+            def find(lo_, hi_):
+                combos = itertools.product(*[m.objects_of(t) for _, t in unbound])
+                for c in itertools.islice(combos, MAX_BINDING_CANDIDATES):
+                    nb = {**b, **dict(zip(names, c))}
+                    for i in range(lo_, hi_ + 1):
+                        if m.holds(meth.precondition, nb, self.states[i]):
+                            return nb, i
+                return None
+
+            found = find(lo, hi) if lo <= hi else None
+            if found is None:
+                found = find(0, n)  # outside the window: the encoding decides
+                if found is not None:
+                    print(f'warning: precondition of {mname} for occurrence {tid} does not '
+                          f'hold in its window of the engine sequence', file=sys.stderr)
+            if found is None:
+                raise CertificateError(
+                    f'no binding of {names} satisfies the precondition of '
+                    f'{mname} for occurrence {tid} ({task} {" ".join(args)})')
+            nb, pos = found
+            self.method_args[tid] = [nb[v] for v, _ in meth.params]
+            lits = {(sign, atom) for sign, atom in
+                    m.entailing_literals(meth.precondition, nb, self.states[pos])
+                    if not static(atom[0])}
+            if lits:
+                self.guards[tid] = Guard(tid, mname, self.method_args[tid], lits, pos)
+        self._prune_guards()
+
+    def _necessary_literals(self, pid):
+        """Literals every execution of primitive pid requires: the conjuncts of
+        its precondition that are plain (possibly negated) atoms."""
+        m = self.model
+        name, args = self.prims[pid]
+        schema = m.actions[name]
+        binding = dict(zip((v for v, _ in schema.params), args))
+        out, todo = set(), [schema.precondition]
+        while todo:
+            e = todo.pop()
+            if not e:
+                continue
+            if e[0] == 'and':
+                todo.extend(e[1:])
+            elif e[0] == 'not' and isinstance(e[1], list) and e[1] and \
+                    e[1][0] not in ('and', 'or', 'not', 'imply', 'forall', 'exists', '='):
+                out.add((False, tuple([e[1][0]] + [m.term(a, binding) for a in e[1][1:]])))
+            elif e[0] not in ('or', 'not', 'imply', 'forall', 'exists', '='):
+                out.add((True, tuple([e[0]] + [m.term(a, binding) for a in e[1:]])))
+        return out
+
+    def _prune_guards(self):
+        """Drop guards that need no step of their own.
+
+        A guard for task T is redundant if some primitive `a` in T's subtree is
+        ordered by the hierarchy before everything else in that subtree
+        (including the guards that remain), and every guard literal is a
+        conjunct of a's precondition. In every linearization `a` executes, so
+        the check placed immediately before `a` holds; that point follows every
+        hierarchy predecessor of T and every check that must precede T's (all
+        of them precede `a`), and precedes the rest of T's subtree.
+
+        For an empty method (nothing in T's subtree) the same holds with `a`
+        the first of T's hierarchy successors: everything ordered before T, or
+        checked before it, also precedes every successor of T.
+        Processed bottom-up, so descendants' guards are decided first.
+        """
+        if not self.guards:
+            return
+        hierarchy = self.hierarchy_constraints()
+        for tid in reversed([o for o in self.traversal if o in self.guards]):
+            g = guard_id(tid)
+            rest = self.elements(tid) - {g}
+            if not rest:
+                rest = set().union(*[self.elements(o) for o in self._sibling_successors(tid)])
+            for a in rest:
+                if a not in self.prims:
+                    continue
+                if all((a, e) in hierarchy for e in rest if e != a) and \
+                        self.guards[tid].literals <= self._necessary_literals(a):
+                    del self.guards[tid]
+                    break
+
+    def _descends(self, x, ancestor):
+        while x is not None:
+            if x == ancestor:
+                return True
+            x = self.parent.get(x)
+        return False
+
+    def elements(self, oid):
+        """Primitive leaves and guards within oid's subtree (guards by id)."""
+        if oid in self.prims:
+            return {oid}
+        out = {guard_id(oid)} if oid in self.guards else set()
+        for c in self.children[oid]:
+            out |= self.elements(c)
+        return out
+
+    def hierarchy_constraints(self):
+        """Every ordering the hierarchy imposes among primitives and guards:
+        a guard precedes everything else in its subtree, and for siblings
+        s1 < s2 everything in s1's subtree precedes everything in s2's."""
+        edges = set()
+        for tid in self.guards:
+            g = guard_id(tid)
+            edges.update((g, e) for e in self.elements(tid) if e != g)
+        orders = [self.root_order] + [self.sibling_order[t] for t in self.decomps]
+        for order in orders:
+            for a, b in order:
+                edges.update(itertools.product(self.elements(a), self.elements(b)))
+        return edges
+
+
+class Certificate:
+    def __init__(self, decomposition, orders, starts, makespan, semantics='pocl',
+                 domain_text=None, actual_text=None):
+        self.dec = decomposition
+        self.model = decomposition.model
+        self.prims = decomposition.prims
+        self.domain_text, self.actual_text = domain_text, actual_text
+        self.semantics = semantics
+        self.makespan = makespan
+
+        guard_ids = {guard_id(t) for t in decomposition.guards}
+        nodes = set(self.prims) | guard_ids
+        missing = nodes - set(starts)
+        if missing:
+            raise CertificateError(
+                f'no solved start layer for plan steps {sorted(map(str, missing))} '
+                f'(was the plan encoded with the same method-precondition guards?)')
+        self.starts = {p: starts[p] for p in nodes}
+        # Reference linearization: by solved layer. Every submitted ordering
+        # edge goes to a strictly later layer, so this is one of the
+        # certificate's linearizations.
+        self.layered = sorted(self.prims, key=lambda p: (self.starts[p], p))
+        self.position = {p: i for i, p in enumerate(self.layered)}
+        self.order = self._build_order(orders, nodes)
+
+    def call(self, oid):
+        return self.dec.call(oid)
 
     # -- ordering ------------------------------------------------------------
 
-    def _build_order(self, solver_orders):
+    def _build_order(self, solver_orders, nodes):
         prims = set(self.prims)
-        edges = {(a, b) for a, b in solver_orders if a in prims and b in prims}
-        missing_inherited = self.inherited - edges
-        edges |= self.inherited
+        hierarchy = self.dec.hierarchy_constraints()
+        edges = {(a, b) for a, b in solver_orders if a in nodes and b in nodes}
+        missing_inherited = hierarchy - edges
+        edges |= hierarchy
 
         if self.semantics == 'parallel':
             edges |= self._interference_edges()
 
-        bad = [(a, b) for a, b in edges if self.starts[a] >= self.starts[b]]
+        # A guard is a zero-duration check at the start of its layer: its
+        # supporters end before that layer (strict), and whatever it precedes
+        # may start in the same layer (non-strict). Real actions take a layer.
+        dur = lambda x: 0 if is_guard_id(x) else 1
+        bad = [(a, b) for a, b in edges if self.starts[b] < self.starts[a] + dur(a)]
         if bad:
             a, b = bad[0]
-            why = (' (inherited from the decomposition but not enforced by the reorderer)'
+            why = (' (required by the decomposition but not enforced by the reorderer)'
                    if (a, b) in missing_inherited else '')
             raise CertificateError(
                 f'ordering {a} < {b}{why} contradicts the solved layers '
-                f'{self.starts[a]} >= {self.starts[b]}; {len(bad)} such edge(s)')
+                f'{self.starts[a]}, {self.starts[b]}; {len(bad)} such edge(s)')
 
         g = nx.DiGraph()
-        g.add_nodes_from(prims)
+        g.add_nodes_from(nodes)
         g.add_edges_from(edges)
-        if not nx.is_directed_acyclic_graph(g):  # cannot happen given the check above
+        if not nx.is_directed_acyclic_graph(g):
             raise CertificateError('submitted ordering is cyclic')
-        reduced = nx.transitive_reduction(g)
+        # Project onto real actions, keeping orderings that pass through a
+        # guard. In any linearization of the projection every predecessor of
+        # a guard precedes every successor, so the check can be placed right
+        # after its last predecessor, where all its supporters have run and
+        # no threat it was protected from has.
+        closure = nx.transitive_closure_dag(g)
+        proj = nx.DiGraph()
+        proj.add_nodes_from(prims)
+        proj.add_edges_from((a, b) for a, b in closure.edges() if a in prims and b in prims)
+        reduced = nx.transitive_reduction(proj)
         chain = nx.dag_longest_path_length(reduced) + 1 if prims else 0
         if self.makespan is not None and chain != self.makespan:
             raise CertificateError(
@@ -724,20 +1012,21 @@ class Certificate:
                f'  (:problem {m.problem_name})',
                '  (:decomposition']
         root = '    (:root'
-        if self.root_params:
-            root += ' :parameters (' + ' '.join(self.root_params) + ')'
-        root += ' :subtasks ' + self.task_list([self.occ(r) for r in self.root_children]) + ')'
+        dec = self.dec
+        if dec.root_params:
+            root += ' :parameters (' + ' '.join(dec.root_params) + ')'
+        root += ' :subtasks ' + self.task_list([self.occ(r) for r in dec.root_children]) + ')'
         out.append(root)
-        queue = [r for r in self.root_children if r in self.decomps]
+        queue = [r for r in dec.root_children if r in dec.decomps]
         while queue:
             t = queue.pop(0)
-            task, args, mname, _ = self.decomps[t]
-            kids = self.children[t]
-            out.append(f'    {self.occ(t)[:-1]} :method ({" ".join([mname] + self.method_args[t])})'
+            task, args, mname, _ = dec.decomps[t]
+            kids = dec.children[t]
+            out.append(f'    {self.occ(t)[:-1]} :method ({" ".join([mname] + dec.method_args[t])})'
                        f' :subtasks {self.task_list([self.occ(k) for k in kids])})')
-            queue.extend(k for k in kids if k in self.decomps)
+            queue.extend(k for k in kids if k in dec.decomps)
         out[-1] += ')'
-        tasks = self.task_list([self.occ(p) for p in self.sequence])
+        tasks = self.task_list([self.occ(p) for p in self.layered])
         ordering = self.task_list([f'(< {self.oid(a)} {self.oid(b)})' for a, b in self.order])
         out.append(f'  (:htn :tasks {tasks}')
         out.append(f'    :ordering {ordering}))')
@@ -747,10 +1036,12 @@ class Certificate:
 def build_certificate(domain_text, problem_text, actual_text, map_text, sol_text,
                       makespan=None, semantics='pocl'):
     model = Model(domain_text, problem_text)
+    dec = Decomposition(model, actual_text)
     orders, starts, optimal = parse_maxsat_solution(map_text, sol_text)
     if makespan is None:
-        makespan = (max(starts.values()) + 1) if starts else 0
-    cert = Certificate(model, domain_text, actual_text, orders, starts, makespan, semantics)
+        real = [t for a, t in starts.items() if isinstance(a, int)]
+        makespan = (max(real) + 1) if real else 0
+    cert = Certificate(dec, orders, starts, makespan, semantics, domain_text, actual_text)
     cert.optimal = optimal
     return cert
 

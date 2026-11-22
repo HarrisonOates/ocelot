@@ -158,7 +158,9 @@ def calculate_graph_statistics(pop, starts=None):
     # Assuming pop.actions is an iterable of action name strings
 
     # --- 2. Basic Statistics ---
-    plan_actions = [a for a in G.nodes() if 'init#' not in a and 'goal#' not in a]
+    # Method-precondition guards are internal zero-duration steps, not actions.
+    plan_actions = [a for a in G.nodes()
+                    if 'init#' not in a and 'goal#' not in a and '__guard' not in a]
     stats['num_actions'] = len(plan_actions)
     stats['num_orderings'] = G.number_of_edges()
 
@@ -171,14 +173,16 @@ def calculate_graph_statistics(pop, starts=None):
     try:
         if starts:
             # Authoritative: the makespan the MaxSAT solver actually optimized.
-            real_starts = [t for a, t in starts.items() if 'init#' not in a and 'goal#' not in a]
+            real_starts = [t for a, t in starts.items()
+                           if 'init#' not in a and 'goal#' not in a and '__guard' not in a]
             stats['makespan'] = (max(real_starts) + 1) if real_starts else 0
         else:
             # Fallback for callers with no solved Start(a,t) assignments
             # (e.g. a pre-solve POP): use the causal/ordering graph's
             # longest path as the best available estimate.
             critical_path_nodes = nx.dag_longest_path(G)
-            critical_path_actions = [n for n in critical_path_nodes if 'init#' not in n and 'goal#' not in n]
+            critical_path_actions = [n for n in critical_path_nodes
+                                     if 'init#' not in n and 'goal#' not in n and '__guard' not in n]
             stats['makespan'] = len(critical_path_actions)
 
         # Parallelism = total actions / makespan. A score of 1.0 is sequential.

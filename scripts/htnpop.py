@@ -11,6 +11,7 @@ from collections import defaultdict
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import htnorder
+from certificate import Model, Decomposition
 
 import tarskilite as tl
 import encoder as encoder
@@ -26,6 +27,9 @@ class Action:
         self.adds = adds
         self.dels = dels
         self.instance_id = instance_id  # Unique per occurrence
+        # Zero-duration steps (init, method-precondition guards) occupy no
+        # layer of their own: whatever they precede may start in their layer.
+        self.zero_duration = False
 
     def __repr__(self):
         return f"{self.name}#{self.instance_id}" if self.instance_id is not None else self.name
@@ -58,7 +62,30 @@ def lift_plan_to_pop(domain_content: str, problem_content: str, trace_content: s
     # Includes the closed-world `-predicate` facts that compiled-away negative
     # preconditions depend on, so those preconditions have a producer.
     initial_state = htnorder.get_initial_state_with_negatives(problem_content, grounded_actions_map)
-    htn_constraints = htnorder.find_implied_constraints(trace_content, domain_content, problem_content)
+
+    # The decomposition in source-model terms (shared with certificate.py, so
+    # both agree on method bindings and guards). Its hierarchy constraints are
+    # exact: every ordering the source methods impose between primitives and
+    # method-precondition guards.
+    decomposition = Decomposition(Model(domain_content, problem_content), trace_content)
+    htn_constraints = decomposition.hierarchy_constraints()
+
+    # Each applied method with a non-static precondition becomes a
+    # zero-duration guard step consuming its precondition literals, so the
+    # encoder gives it unthreatened causal support like any action. Negative
+    # literals use the same complementary `-predicate` facts as actions.
+    positive_init = {tuple(lit) for lit in htnorder.get_initial_state(problem_content)}
+    guard_actions = []
+    for guard in decomposition.guards.values():
+        pres = {atom if positive else htnorder.negate_fact(atom)
+                for positive, atom in guard.literals}
+        for fact in pres:
+            if htnorder.is_negative_fact(fact) and htnorder.negate_fact(fact) not in positive_init:
+                initial_state.add(fact)
+        g = Action(f"(__guard_{guard.method} {' '.join(guard.args)})", pres, set(), set(),
+                   instance_id=guard.id)
+        g.zero_duration = True
+        guard_actions.append(g)
     
     # The trace gives us a linear sequence of action IDs. We must process them in this order.
     linear_trace_ids = sorted(grounded_actions_map.keys())
@@ -73,6 +100,7 @@ def lift_plan_to_pop(domain_content: str, problem_content: str, trace_content: s
 
     # Create and add the special 'init' action
     init_action = Action("init", set(), initial_state, set(), instance_id="init")
+    init_action.zero_duration = True
     pop.add_action(init_action)
     pop.init = init_action
 
@@ -97,6 +125,11 @@ def lift_plan_to_pop(domain_content: str, problem_content: str, trace_content: s
 
     # Create and add the special 'goal' action
     # Assume goal is empty as HTN problems don't require a specific goal state
+    for g in guard_actions:
+        pop.add_action(g)
+        id_to_action_obj[g.instance_id] = g
+        plan_actions.append(g)
+
     goal_action = Action("goal", set(), set(), set(), instance_id="goal")
     pop.add_action(goal_action)
     pop.goal = goal_action
@@ -115,7 +148,8 @@ def lift_plan_to_pop(domain_content: str, problem_content: str, trace_content: s
 
 
     # Build adder/deleter dictionaries
-    all_fluents = initial_state.union(*[a.pres | a.adds | a.dels for a in linear_plan_objects if a is not None])
+    all_fluents = initial_state.union(*[a.pres | a.adds | a.dels for a in linear_plan_objects if a is not None],
+                                      *[g.pres for g in guard_actions])
     adders = {f: set() for f in all_fluents}
     for i, action in enumerate(linear_plan_objects):
         if action is None:
@@ -167,15 +201,12 @@ def lift_plan_to_pop(domain_content: str, problem_content: str, trace_content: s
                 # edge, so it cannot create a cycle (not added to htn_order_edges).
                 pop.link_actions(action1, "htn_order", action2)
 
-    # htn_order constraints are reconstructed (in htnorder.find_implied_constraints)
-    # from the HTN's own declared structure, including a fallback that infers a
-    # dependency from a single unambiguous fact producer when a subtask resolves
-    # to zero primitives. That fallback can conflict with a causal link derived
-    # independently above (both routing through the same shared action from
-    # opposite directions), producing a cycle. Causal links are the ground truth
-    # here (they come directly from the actions' own preconditions/effects), so
-    # if combining the two produces a cycle, drop the minimal set of htn_order
-    # edges responsible rather than leave the POP unsatisfiable.
+    # htn_order constraints come from the source methods (Decomposition) and
+    # are consistent with the engine's execution order, as are the seeded
+    # causal links, so combining them should never produce a cycle. If it
+    # does, causal links are the ground truth here: drop the minimal set of
+    # htn_order edges responsible rather than leave the POP unsatisfiable (the
+    # certificate writer then reports the hierarchy ordering it cannot see).
     if htn_order_edges:
         removed = 0
         while True:
@@ -206,7 +237,7 @@ def lift_plan_to_pop(domain_content: str, problem_content: str, trace_content: s
     pop.transitivly_reduce()
     assert nx.is_directed_acyclic_graph(pop.network), "CRITICAL ERROR: The final POP contains a cycle!"
     
-    pop.A = set(linear_plan_objects)
+    pop.A = set(linear_plan_objects) | set(guard_actions)
     pop.F = all_fluents
     return pop
 

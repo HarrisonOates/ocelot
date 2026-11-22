@@ -102,7 +102,10 @@ def encode_POP(pop, cmdargs):
     orders = [Order(a1, a2) for a1 in A for a2 in A]
     supports = [Support(a1, p, a2) for a2 in A for p in a2.pres for a1 in adders[p]]
 
-    horizon = len(A)
+    # Method-precondition guards (and init) take no time step of their own.
+    zero_duration = {a for a in A if getattr(a, 'zero_duration', False) or a is init}
+    guards = {a for a in zero_duration if a is not init}
+    horizon = len(A) - len(guards)
 
     @proposition(E)
     class Start(Hashable):
@@ -198,12 +201,18 @@ def encode_POP(pop, cmdargs):
     # general unit-duration precedence rule to push every action's start
     # back by one full timestep for no causal reason, inflating the
     # computed makespan by exactly 1.
+    #
+    # Method-precondition guards are zero-duration checks for the same reason:
+    # a guard "at layer L" is evaluated at the start of step L, so its
+    # supporters must finish by L-1 (strict, from their unit duration) while
+    # what it precedes -- the method's descendants, or a deleter it was
+    # protected from -- may start in L itself.
     for a1 in A:
         for a2 in A:
             if a1 is a2:
                 continue
             for t1 in range(horizon):
-                forbidden_times = range(t1) if a1 is init else range(t1 + 1)
+                forbidden_times = range(t1) if a1 in zero_duration else range(t1 + 1)
                 for t2 in forbidden_times:
                     clauses.append((~Order(a1, a2)) | (~start_vars[(a1, t1)]) | (~start_vars[(a2, t2)]))
 
@@ -211,6 +220,8 @@ def encode_POP(pop, cmdargs):
     for t in range(1, horizon):
         clauses.append(makespan_ge[t + 1] >> makespan_ge[t])
     for a in A:
+        if a in guards:
+            continue  # a guard's layer is not a time step of the plan
         for t in range(horizon):
             clauses.append(start_vars[(a, t)] >> makespan_ge[t + 1])
 
@@ -248,7 +259,7 @@ def encode_POP(pop, cmdargs):
     # additionally forbids add/delete interference between the effects of two
     # scheduled actions.
     if getattr(cmdargs, 'semantics', 'pocl') == 'parallel':
-        scheduled_actions = [a for a in A if a is not init and a is not goal]
+        scheduled_actions = [a for a in A if a is not init and a is not goal and a not in guards]
         for i, a1 in enumerate(scheduled_actions):
             for a2 in scheduled_actions[i + 1:]:
                 if not ((a1.adds & a2.dels) or (a2.adds & a1.dels)):

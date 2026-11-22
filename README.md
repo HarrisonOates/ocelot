@@ -129,10 +129,15 @@ objective (`:makespan` requirement and `(:metric minimize (makespan))`).
 Otherwise it uses `hddl-1.1`, because `ipc2027` accepts partial orders only for
 makespan.
 
-Known limitation: the MaxSAT reorderer does not yet model method preconditions,
-so it can leave an action unordered that may destroy a method's precondition.
-Bell then rejects the certificate (`method_precondition`) and the run fails
-instead of reporting an invalid plan.
+Method preconditions are part of the reordering. Each applied method whose
+precondition can change gets an internal zero-duration *guard* step. The guard
+consumes the precondition, so it gets causal support and threat protection like
+an action. It comes after everything the hierarchy orders before the method's
+task, and before everything in the task's subtree. A guard at layer L is checked
+at the start of step L: its supporters finish by L-1, and the method's actions,
+or a deleter ordered after it, may start in L. Guards never add a time step and
+are never emitted in the plan. A guard is pruned when one primitive is
+guaranteed to run first in its window and requires the same literals itself.
 
 ## Repository layout
 
