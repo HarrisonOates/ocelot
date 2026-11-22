@@ -31,6 +31,12 @@ HDDL domain + problem
         │
         ▼
   analyzer.py         (Extract makespan-optimal plan)
+        │
+        ▼
+  certificate.py      (write HDDL 1.1 partial-order plan, <output>.hddl)
+        │
+        ▼
+  Bell (optional)     (validate the plan; check its makespan)
 ```
 
 ## Prerequisites
@@ -86,10 +92,47 @@ Options:
   --g-value TEXT              G-value mode           [default: makespan]
   --weight INT                A* weight              [default: 1]
   --semantics ["pocl"|"parallel"] Makespan semantics [default: "pocl"]
+  --plan-output PATH  Where to write the plan certificate [default: <output>.hddl]
+  --bell PATH         Bell validator binary [default: $OCELOT_BELL,
+                      ../bell-htn/target/release/bell, or `bell` on PATH]
+  --no-bell           Skip validating the certificate
+  --bell-profile ["auto"|"ipc2027"|"hddl-1.1"]  [default: auto]
+  --bell-timeout S    Seconds allowed for Bell [default: 600]
   --engine PATH       Override engine binary
   --parser PATH       Override parser binary
   --grounder PATH     Override grounder binary
 ```
+
+## Plan output
+
+The final plan is written to `<output>.hddl` as an **HDDL 1.1 plan certificate**
+in the original (lifted) domain's names: the chosen decomposition (every method
+with all its parameters, in declaration order) plus the primitive actions as a
+partial order (`:tasks` / `:ordering`). pandaPI compilation artefacts
+(`__method_precondition_*`, `__top`, ...) are removed. Method parameters missing
+from the cleaned PANDA plan are recovered by unification with the task head and
+subtasks, and otherwise by search over typed objects against the method's
+precondition.
+
+The partial order is the reorderer's own MaxSAT `Order` relation (causal links,
+threat resolutions and HTN orderings), plus every ordering inherited through
+the decomposition, plus (for `--semantics parallel`) an edge between each pair of
+interfering actions in different layers, transitively reduced. Its longest chain
+is checked to equal the reported makespan.
+
+When the [Bell](https://github.com/HarrisonOates/bell) validator is found,
+the pipeline runs it on the certificate. The run fails, with Bell's
+diagnostics, if Bell rejects the plan or reports a different makespan. Bell's
+verdict is saved in `<output>.bell.json`. With `--bell-profile auto`, Bell uses
+its competition profile `ipc2027` when the instance declares the makespan
+objective (`:makespan` requirement and `(:metric minimize (makespan))`).
+Otherwise it uses `hddl-1.1`, because `ipc2027` accepts partial orders only for
+makespan.
+
+Known limitation: the MaxSAT reorderer does not yet model method preconditions,
+so it can leave an action unordered that may destroy a method's precondition.
+Bell then rejects the certificate (`method_precondition`) and the run fails
+instead of reporting an invalid plan.
 
 ## Repository layout
 
@@ -113,6 +156,7 @@ PANDA/
 ├── scripts/                    # Python pipeline (ocelot)
 │   ├── run_planner.py          # CLI entry point
 │   ├── htnpop.py               # HTN → POCL encoding
+│   ├── certificate.py          # HDDL 1.1 partial-order plan output
 │   └── ...                     # MAX-SAT utilities (popgen-derived)
 │
 ├── domains/                    # Benchmark problems
