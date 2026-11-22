@@ -159,6 +159,13 @@ def lift_plan_to_pop(domain_content: str, problem_content: str, trace_content: s
             if not pop.network.has_edge(action1, action2):
                 pop.link_actions(action1, "htn_order", action2)
                 htn_order_edges.add((action1, action2))
+            elif 'htn_order' not in pop.link_reasons[(action1, action2)]:
+                # The edge already exists as a seed causal link, but the encoder
+                # only turns 'htn_order'-tagged edges into hard clauses: without
+                # the tag the solver may pick another supporter and drop an
+                # ordering the hierarchy requires. Same direction as an existing
+                # edge, so it cannot create a cycle (not added to htn_order_edges).
+                pop.link_actions(action1, "htn_order", action2)
 
     # htn_order constraints are reconstructed (in htnorder.find_implied_constraints)
     # from the HTN's own declared structure, including a fallback that infers a
